@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Off-Axis High Energy Laser Director</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0d0d0d; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.8); font-size: 1.2rem; pointer-events: none; transition: opacity 0.5s;
+        }
+
+        #controls {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 15px; align-items: center;
+            z-index: 10;
+            background: rgba(30, 30, 35, 0.8);
+            padding: 12px 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.25);
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 90vw;
+            transition: opacity 0.5s;
+        }
+        button {
+            background: rgba(60, 70, 90, 0.9); color: #fff; 
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px; cursor: pointer; border-radius: 6px;
+            font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        button:hover { background: rgba(90, 100, 140, 1.0); transform: translateY(-1px); }
+
+        .control-group {
+            display: flex; flex-direction: column; align-items: center; gap: 6px; color: #d0d0d0; font-size: 11px; font-weight: 700; text-transform: uppercase;
+        }
+        input[type=range] {
+            -webkit-appearance: none; width: 80px; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -6px; box-shadow: 0 0 8px rgba(255,255,255,0.5); border: 2px solid #333;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.3); border-radius: 2px;
+        }
+        
+        #hud {
+            position: absolute; top: 20px; right: 20px; text-align: right; pointer-events: none;
+            color: rgba(100, 200, 255, 0.9); font-family: 'Consolas', 'Monaco', monospace; font-size: 14px;
+            text-shadow: 0 0 5px rgba(0, 100, 255, 0.5);
+            transition: opacity 0.5s;
+        }
+        .hud-line { margin-bottom: 5px; }
+
+        #wasd-hint {
+            position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.6); font-size: 12px; pointer-events: none;
+            text-transform: uppercase; letter-spacing: 2px; font-weight: 600;
+            transition: opacity 0.5s;
+        }
+
+        /* Hides EVERYTHING in fullscreen mode */
+        body.fullscreen-mode { cursor: none; }
+        body.fullscreen-mode #controls,
+        body.fullscreen-mode #hud,
+        body.fullscreen-mode #wasd-hint { display: none !important; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">Calibrating Optics...</div>
+    
+    <div id="hud">
+        <div class="hud-line">SYSTEM STATUS: <span style="color:#0f0">NOMINAL</span></div>
+        <div class="hud-line">CONFIG: OFF-AXIS BEAM DIRECTOR</div>
+        <div class="hud-line">PRIMARY MIRROR: 4.5m PARABOLIC</div>
+    </div>
+
+    <div id="wasd-hint">W A S D (Move) • Q E (Up/Down) • Drag (Look)</div>
+
+    <div id="controls">
+        <!-- Existing Sliders -->
+        <div class="control-group">
+            <label>Speed</label>
+            <input type="range" id="speed-slider" min="0.1" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label>Out Div</label>
+            <input type="range" id="divergence-slider" min="0.0" max="2.0" step="0.1" value="1.0">
+        </div>
+        
+        <!-- New Beam Geometry Sliders -->
+        <div class="control-group">
+            <label>Sec Div</label>
+            <input type="range" id="sec-div-slider" min="0.5" max="6.0" step="0.1" value="3.8">
+        </div>
+        <div class="control-group">
+            <label>Waist Loc</label>
+            <input type="range" id="waist-loc-slider" min="50" max="400" step="10" value="150">
+        </div>
+        <div class="control-group">
+            <label>Waist Rad</label>
+            <input type="range" id="waist-rad-slider" min="0.05" max="2.0" step="0.05" value="0.2">
+        </div>
+        <div class="control-group">
+            <label>Beam Ext</label>
+            <input type="range" id="beam-ext-slider" min="50" max="300" step="10" value="150">
+        </div>
+
+        <!-- Primary Mirror Debug Sliders -->
+        <div class="control-group">
+            <label>Prim Rot X</label>
+            <input type="range" id="prim-rot-x" min="-180" max="180" step="1" value="21">
+        </div>
+        <div class="control-group">
+            <label>Prim Rot Y</label>
+            <input type="range" id="prim-rot-y" min="-180" max="180" step="1" value="90">
+        </div>
+        <div class="control-group">
+            <label>Prim Rot Z</label>
+            <input type="range" id="prim-rot-z" min="-180" max="180" step="1" value="-18">
+        </div>
+
+        <button id="btn-replay">Reset View</button>
+        <button id="btn-fullscreen">Full Screen</button>
+    </div>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            rodColor: 0xa80018, 
+            pumpColor: 0xffffdd, 
+            beamColor: 0xff0000, 
+            metalColor: 0xffffff,
+            structureColor: 0x888888,
+            mirrorFaceColor: 0xffffff,
+            lensColor: 0xaaccff,
+            bloomStrength: 1.5, 
+            bloomRadius: 0.5,
+            bloomThreshold: 0.15
+        };
+
+        // --- Geometry Constants ---
+        const GEO = {
+            sourceStart: new THREE.Vector3(-4, -5.5, 0),
+            secondaryPos: new THREE.Vector3(10, -5.5, 0),
+            primaryPos: new THREE.Vector3(0, 3, 0),
+            secondaryRadius: 0.7,
+            primaryRadius: 4.5,
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0d0d0d);
+        scene.fog = new THREE.FogExp2(0x0d0d0d, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000); 
+        camera.position.set(-8, 2, 18);
+        camera.lookAt(5, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2; 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enablePan = false; 
+        controls.target.set(5, 0, 0);
+        controls.maxDistance = 500; 
+
+        // --- Smooth Camera Physics Variables ---
+        const velocity = new THREE.Vector3();
+        const friction = 0.90; // How fast you stop (lower = faster stop)
+        const acceleration = 1.5; // How fast you speed up
+
+        // --- Input Handling ---
+        const keyState = { w: false, a: false, s: false, d: false, q: false, e: false };
+        document.addEventListener('keydown', (e) => { 
+            if(keyState.hasOwnProperty(e.key.toLowerCase())) keyState[e.key.toLowerCase()] = true; 
+        });
+        document.addEventListener('keyup', (e) => { 
+            if(keyState.hasOwnProperty(e.key.toLowerCase())) keyState[e.key.toLowerCase()] = false; 
+        });
+
+        // --- Post Processing ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = CONFIG.bloomThreshold;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        dirLight.position.set(-10, 20, 10);
+        scene.add(dirLight);
+        const backLight = new THREE.PointLight(0x6677cc, 1.5, 50);
+        backLight.position.set(-5, 5, -10);
+        scene.add(backLight);
+        const underLight = new THREE.PointLight(0xffaa55, 1.0, 40);
+        underLight.position.set(5, -6, 5);
+        scene.add(underLight);
+        const rimLight = new THREE.SpotLight(0x4444ff, 4.0, 60, 0.5, 0.5);
+        rimLight.position.set(20, 5, -10);
+        rimLight.lookAt(5, 0, 0);
+        scene.add(rimLight);
+
+        // --- Materials ---
+        const metalMat = new THREE.MeshStandardMaterial({ color: CONFIG.metalColor, metalness: 0.9, roughness: 0.2 });
+        const darkMat = new THREE.MeshStandardMaterial({ color: CONFIG.structureColor, metalness: 0.6, roughness: 0.5 });
+        const mirrorMat = new THREE.MeshStandardMaterial({ color: CONFIG.mirrorFaceColor, metalness: 1.0, roughness: 0.01, emissive: 0x333333 });
+        const glassMat = new THREE.MeshPhysicalMaterial({ color: CONFIG.lensColor, metalness: 0, roughness: 0, transmission: 0.95, thickness: 0.5, ior: 1.5, transparent: true, opacity: 0.4 });
+
+        const macroGroup = new THREE.Group();
+        scene.add(macroGroup);
+
+        // --- 1. Laser Source System ---
+        const sourceGroup = new THREE.Group();
+        sourceGroup.position.copy(GEO.sourceStart);
+        macroGroup.add(sourceGroup);
+
+        // 1a. Ruby Rod
+        const rodGeo = new THREE.CylinderGeometry(0.5, 0.5, 4, 64);
+        rodGeo.rotateZ(Math.PI / 2);
+        const rodMat = new THREE.MeshPhysicalMaterial({
+            color: CONFIG.rodColor, metalness: 0.1, roughness: 0.1, transmission: 0.9, thickness: 2.0, ior: 1.76,
+            emissive: CONFIG.beamColor, emissiveIntensity: 0.8,
+            transparent: true, opacity: 1
+        });
+        const rod = new THREE.Mesh(rodGeo, rodMat);
+        sourceGroup.add(rod);
+
+        // 1b. Pump Source (Helix)
+        const curvePoints = [];
+        const helixRadius = 0.75; const turns = 6.5; const height = 3.8;
+        for (let i = 0; i <= 150; i++) {
+            const t = i / 150;
+            const angle = t * Math.PI * 2 * turns;
+            const x = (t - 0.5) * height;
+            curvePoints.push(new THREE.Vector3(x, Math.cos(angle)*helixRadius, Math.sin(angle)*helixRadius));
+        }
+        const helixCurve = new THREE.CatmullRomCurve3(curvePoints);
+        const coilGeo = new THREE.TubeGeometry(helixCurve, 150, 0.07, 16, false);
+        const coilMat = new THREE.MeshStandardMaterial({
+            color: 0xaaaaaa, emissive: CONFIG.pumpColor, emissiveIntensity: 0.2, 
+            roughness: 0.3, metalness: 0.8
+        });
+        const pump = new THREE.Mesh(coilGeo, coilMat);
+        sourceGroup.add(pump);
+
+        // 1c. Mirrors (HR and OC)
+        const mirrorGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 64);
+        mirrorGeo.rotateZ(Math.PI / 2);
+        const sourceMirrorMat = new THREE.MeshStandardMaterial({ 
+            color: CONFIG.metalColor, metalness: 0.9, roughness: 0.15 
+        });
+        
+        const mirrorHR = new THREE.Mesh(mirrorGeo, sourceMirrorMat);
+        mirrorHR.position.set(-2.2, 0, 0);
+        sourceGroup.add(mirrorHR);
+
+        const mirrorOC = new THREE.Mesh(mirrorGeo, sourceMirrorMat.clone());
+        mirrorOC.position.set(2.2, 0, 0);
+        sourceGroup.add(mirrorOC);
+
+        // 1d. Output Lens
+        const lensGeo = new THREE.SphereGeometry(0.5, 32, 16);
+        lensGeo.scale(0.2, 1.0, 1.0); 
+        const lensMatSource = new THREE.MeshPhysicalMaterial({ 
+            color: CONFIG.lensColor, metalness: 0.0, roughness: 0.05, transmission: 0.95, thickness: 0.5, ior: 1.5,
+            transparent: true, opacity: 1
+        });
+        const lens = new THREE.Mesh(lensGeo, lensMatSource);
+        lens.position.set(2.5, 0, 0);
+        sourceGroup.add(lens);
+
+
+        // --- 2. Secondary Mirror (Convex, Directing Mirror) ---
+        const secGroup = new THREE.Group();
+        secGroup.position.copy(GEO.secondaryPos);
+        macroGroup.add(secGroup);
+
+        // Set rotation for visual alignment
+        secGroup.rotation.y = -Math.PI / 2; 
+        secGroup.rotation.x = -Math.PI / 12; 
+
+        const secGeo = new THREE.SphereGeometry(GEO.secondaryRadius, 32, 32, 0, Math.PI*2, 0, 0.8);
+        secGeo.rotateX(Math.PI / 2); 
+        secGroup.add(new THREE.Mesh(secGeo, mirrorMat));
+
+        const secBackGeo = new THREE.CylinderGeometry(GEO.secondaryRadius, GEO.secondaryRadius*0.8, 0.5, 32);
+        secBackGeo.rotateX(Math.PI/2);
+        const secBack = new THREE.Mesh(secBackGeo, darkMat);
+        secBack.position.z = 0.22; 
+        secGroup.add(secBack);
+
+        const standGeo = new THREE.CylinderGeometry(0.1, 0.2, 2.5, 16);
+        const standGroup = new THREE.Group(); 
+        standGroup.position.copy(GEO.secondaryPos); 
+        standGroup.position.y -= 1.5;
+        standGroup.add(new THREE.Mesh(standGeo, metalMat));
+        macroGroup.add(standGroup);
+
+
+        // --- 3. Primary Mirror (Concave, Focus Target) ---
+        const primGroup = new THREE.Group();
+        // Fix for Gimbal Lock: Change rotation order to YXZ so Y (90deg) doesn't align X and Z axes
+        primGroup.rotation.order = 'YXZ'; 
+        primGroup.position.copy(GEO.primaryPos);
+        macroGroup.add(primGroup);
+        
+        const dishPts = [];
+        for(let i=0; i<=40; i++) { const r = (i/40) * GEO.primaryRadius; dishPts.push(new THREE.Vector2(r, (r*r) * 0.06)); }
+        dishPts.push(new THREE.Vector2(GEO.primaryRadius, 1.0)); dishPts.push(new THREE.Vector2(0, 1.0));
+        const primGeo = new THREE.LatheGeometry(dishPts, 64);
+        primGeo.center(); primGeo.rotateX(Math.PI/2); 
+        primGroup.add(new THREE.Mesh(primGeo, mirrorMat));
+
+        // Primary Mirror Support Structure
+        // Fixed: Zero X offset prevents out-of-plane misalignment.
+        // Moved -1.5 in Z to sit behind the mirror along the optical axis.
+        const pillarGeo = new THREE.BoxGeometry(2, 6, 2); 
+        const pillar = new THREE.Mesh(pillarGeo, metalMat);
+        pillar.position.set(0, -3, -1.5); 
+        primGroup.add(pillar);
+
+
+        // --- Beam Physics ---
+        const microGroup = new THREE.Group();
+        scene.add(microGroup);
+        const waves = []; const SEGMENTS = 4000; 
+        const waveGeo = new THREE.BufferGeometry();
+        const wavePos = new Float32Array(SEGMENTS * 3);
+        waveGeo.setAttribute('position', new THREE.BufferAttribute(wavePos, 3));
+        const waveMat = new THREE.LineBasicMaterial({ color: CONFIG.beamColor, transparent: true, opacity: 0, blending: THREE.AdditiveBlending });
+
+        for(let i=0; i<400; i++) {
+            const w = new THREE.Line(waveGeo.clone(), waveMat.clone());
+            w.userData = { phase: Math.random()*Math.PI*2, amp: 0.01+Math.random()*0.05, freq: 1.0+Math.random(), rad: Math.abs((Math.random()+Math.random()+Math.random()+Math.random()-2)/2)*0.5, angle: Math.random()*Math.PI*2 };
+            waves.push(w); microGroup.add(w);
+        }
+
+        function lerp(v1, v2, t) { return new THREE.Vector3().lerpVectors(v1, v2, t); }
+        
+        let time = 0; let lastTime = performance.now(); let speedMult = 1.0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const now = performance.now(); const dt = (now - lastTime) / 1000; lastTime = now;
+            
+            // --- Smooth Movement Logic ---
+            const dir = new THREE.Vector3(); 
+            camera.getWorldDirection(dir); 
+            dir.y = 0; 
+            dir.normalize(); 
+            const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+
+            const input = new THREE.Vector3();
+            if(keyState.w) input.add(dir);
+            if(keyState.s) input.sub(dir);
+            if(keyState.d) input.add(right);
+            if(keyState.a) input.sub(right);
+            if(keyState.e) input.y += 1;
+            if(keyState.q) input.y -= 1;
+
+            if (input.lengthSq() > 0) input.normalize();
+
+            // Apply acceleration
+            velocity.addScaledVector(input, acceleration * dt * 10);
+            
+            // Apply friction
+            velocity.multiplyScalar(friction);
+
+            // Apply velocity to both camera and target
+            camera.position.add(velocity);
+            controls.target.add(velocity);
+            controls.update();
+
+            time += dt * 2.0 * speedMult;
+            
+            // --- Read Slider Values ---
+            const sliderDiv = document.getElementById('divergence-slider');
+            const sliderSecDiv = document.getElementById('sec-div-slider');
+            const sliderWaistLoc = document.getElementById('waist-loc-slider');
+            const sliderWaistRad = document.getElementById('waist-rad-slider');
+            const sliderBeamExt = document.getElementById('beam-ext-slider');
+
+            const outDivFactor = sliderDiv ? parseFloat(sliderDiv.value) : 1.0;
+            const secDivFactor = sliderSecDiv ? parseFloat(sliderSecDiv.value) : 3.8;
+            const waistX = sliderWaistLoc ? parseFloat(sliderWaistLoc.value) : 150;
+            const waistRad = sliderWaistRad ? parseFloat(sliderWaistRad.value) : 0.2;
+            const beamExt = sliderBeamExt ? parseFloat(sliderBeamExt.value) : 150;
+            
+            // Define Beam Path Points Dynamically
+            const P1 = GEO.sourceStart;
+            const P2 = new THREE.Vector3(GEO.secondaryPos.x-0.65, GEO.secondaryPos.y, GEO.secondaryPos.z);
+            const P3 = new THREE.Vector3(GEO.primaryPos.x+0.5, GEO.primaryPos.y, GEO.primaryPos.z);
+            const P4 = new THREE.Vector3(waistX, 3, 0); 
+            const P5 = new THREE.Vector3(beamExt, 3, 0); 
+
+            // Calculate Distances
+            const d1 = P1.distanceTo(P2);
+            const d2 = P2.distanceTo(P3);
+            const d3 = P3.distanceTo(P4);
+            const d4 = P4.distanceTo(P5);
+            const totalDist = d1 + d2 + d3 + d4;
+
+            waves.forEach(w => {
+                const arr = w.geometry.attributes.position.array; const u = w.userData; w.material.opacity = 0.5;
+                for(let i=0; i<SEGMENTS; i++) {
+                    const s = (i/(SEGMENTS-1)) * totalDist; 
+                    let pos = new THREE.Vector3(); 
+                    let width = 0.1;
+                    
+                    if(s < d1) { 
+                        pos = lerp(P1, P2, s/d1); 
+                        width = 0.15; 
+                    }
+                    else if(s < d1 + d2) { 
+                        const t = (s - d1) / d2;
+                        pos = lerp(P2, P3, t); 
+                        width = 0.15 + t * (secDivFactor - 0.15); 
+                    }
+                    else if(s < d1 + d2 + d3) {
+                        const t = (s - (d1 + d2)) / d3;
+                        pos = lerp(P3, P4, t);
+                        width = secDivFactor * (1 - t) + waistRad * t;
+                    }
+                    else {
+                        const t = (s - (d1 + d2 + d3)) / d4;
+                        pos = lerp(P4, P5, t);
+                        width = waistRad + t * (2.0 + (outDivFactor - 1.0) * 5.0);
+                    }
+                    
+                    const r = u.rad * width; const osc = Math.sin(s*0.5 - time + u.phase) * u.amp;
+                    arr[i*3] = pos.x; arr[i*3+1] = pos.y + r*Math.cos(u.angle) + osc; arr[i*3+2] = pos.z + r*Math.sin(u.angle);
+                }
+                w.geometry.attributes.position.needsUpdate = true;
+            });
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight); });
+        
+        document.getElementById('speed-slider').addEventListener('input', e => speedMult = parseFloat(e.target.value));
+        
+        // --- Slider Logic for Primary Mirror ---
+        const primRotXSlider = document.getElementById('prim-rot-x');
+        const primRotYSlider = document.getElementById('prim-rot-y');
+        const primRotZSlider = document.getElementById('prim-rot-z');
+
+        function updatePrimaryRotation() {
+            if(!primRotXSlider) return;
+            const rx = THREE.MathUtils.degToRad(parseFloat(primRotXSlider.value));
+            const ry = THREE.MathUtils.degToRad(parseFloat(primRotYSlider.value));
+            const rz = THREE.MathUtils.degToRad(parseFloat(primRotZSlider.value));
+            primGroup.rotation.set(rx, ry, rz);
+        }
+
+        if(primRotXSlider) primRotXSlider.addEventListener('input', updatePrimaryRotation);
+        if(primRotYSlider) primRotYSlider.addEventListener('input', updatePrimaryRotation);
+        if(primRotZSlider) primRotZSlider.addEventListener('input', updatePrimaryRotation);
+
+        updatePrimaryRotation();
+
+        document.getElementById('btn-replay').addEventListener('click', () => { camera.position.set(-8, 2, 18); controls.target.set(5, 0, 0); velocity.set(0,0,0); });
+        document.getElementById('btn-fullscreen').addEventListener('click', () => { if(!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); });
+        document.addEventListener('fullscreenchange', () => { document.body.classList.toggle('fullscreen-mode', !!document.fullscreenElement); });
+        setTimeout(() => document.getElementById('loading').style.opacity = 0, 800);
+        animate();
+    </script>
+</body>
+</html>

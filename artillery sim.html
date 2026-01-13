@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artillery Shell Laser Simulation</title>
+    <!-- Core Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #ffffff33;
+            pointer-events: auto;
+            width: 250px;
+            user-select: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: opacity 0.3s;
+        }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-size: 14px; color: #eee; font-weight: 500; }
+        input[type="range"] { width: 100%; cursor: pointer; }
+        button {
+            background: #d32f2f;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+            transition: background 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        button:hover { background: #b71c1c; }
+        #fsBtn { background: #1976D2; }
+        #fsBtn:hover { background: #1565C0; }
+        
+        .checkbox-group { display: flex; align-items: center; gap: 10px; margin-bottom: 10px;}
+        input[type="checkbox"] { width: auto; cursor: pointer; }
+        h2 { margin-top: 0; font-size: 18px; color: #fff; border-bottom: 1px solid #ffffff33; padding-bottom: 10px; }
+        .instructions { font-size: 11px; color: #ccc; margin-top: 15px; font-style: italic; line-height: 1.4; }
+
+        /* Class to hide UI in fullscreen */
+        .hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <h2>Laser Trace Simulation</h2>
+        
+        <button id="fsBtn">Go Fullscreen</button>
+
+        <div class="control-group">
+            <label>Spin Speed</label>
+            <input type="range" id="speedControl" min="0" max="0.2" step="0.001" value="0.05">
+        </div>
+
+        <div class="control-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="oscillateCheck" checked>
+                <label for="oscillateCheck" style="margin:0; cursor:pointer;">Auto-Scan Mode</label>
+            </div>
+            <label>Manual Laser Position</label>
+            <input type="range" id="laserPosControl" min="-3.5" max="1.6" step="0.01" value="-1.5">
+        </div>
+
+        <button id="clearBtn">Clear Trace</button>
+        <div class="instructions">
+            <strong>Controls:</strong><br>
+            • Arrows Left/Right: Move Laser<br>
+            • Spacebar: Clear Trace<br>
+            • ESC: Exit Fullscreen
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- 1. Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+        scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(5, 2, 8); 
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // --- Controls ---
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 0, -1);
+
+        // --- 2. Lighting ---
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+        hemiLight.position.set(0, 20, 0);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // --- 3. Environment ---
+        const planeGeo = new THREE.PlaneGeometry(200, 200);
+        const planeMat = new THREE.MeshStandardMaterial({ color: 0x55aa55, roughness: 0.8 });
+        const ground = new THREE.Mesh(planeGeo, planeMat);
+        ground.rotation.x = -Math.PI / 2;
+        // Moved ground further down (from -10 to -40)
+        ground.position.y = -40;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Clouds removed as requested
+
+        // --- 4. The Artillery Shell ---
+        const shellGroup = new THREE.Group();
+        
+        const brassMaterial = new THREE.MeshStandardMaterial({ color: 0xE1C662, roughness: 0.15, metalness: 0.9 });
+        const steelMaterial = new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.4, metalness: 0.6 });
+        const copperMaterial = new THREE.MeshStandardMaterial({ color: 0xD68352, roughness: 0.3, metalness: 0.7 });
+
+        // Body
+        const bodyGeo = new THREE.CylinderGeometry(0.8, 0.8, 3.5, 64);
+        const bodyMesh = new THREE.Mesh(bodyGeo, brassMaterial);
+        bodyMesh.rotation.x = -Math.PI / 2; 
+        bodyMesh.position.z = -1.75; 
+        bodyMesh.castShadow = true;
+        bodyMesh.receiveShadow = true;
+        shellGroup.add(bodyMesh);
+
+        // Band
+        const bandGeo = new THREE.CylinderGeometry(0.82, 0.82, 0.4, 64);
+        const bandMesh = new THREE.Mesh(bandGeo, copperMaterial);
+        bandMesh.rotation.x = -Math.PI / 2;
+        bandMesh.position.z = -3.0;
+        bandMesh.castShadow = true;
+        shellGroup.add(bandMesh);
+
+        // Fuse (Inverted Cone)
+        const noseGeo = new THREE.CylinderGeometry(0, 0.8, 1.5, 64); 
+        const noseMesh = new THREE.Mesh(noseGeo, steelMaterial);
+        noseMesh.rotation.x = Math.PI / 2; // Point Inward
+        noseMesh.position.z = 0.75;
+        noseMesh.castShadow = true;
+        noseMesh.receiveShadow = true;
+        shellGroup.add(noseMesh);
+
+        // Base
+        const baseGeo = new THREE.CylinderGeometry(0.7, 0.8, 0.2, 64);
+        const baseMesh = new THREE.Mesh(baseGeo, steelMaterial);
+        baseMesh.rotation.x = -Math.PI / 2;
+        baseMesh.position.z = -3.6;
+        shellGroup.add(baseMesh);
+
+        scene.add(shellGroup);
+
+        // --- 5. The Laser System ---
+        const laserGroup = new THREE.Group();
+        const laserBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 1.0), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+        laserGroup.add(laserBody);
+        
+        const beamGeo = new THREE.CylinderGeometry(0.02, 0.02, 1, 8);
+        beamGeo.rotateX(Math.PI / 2);
+        beamGeo.translate(0, 0, 0.5); 
+        const beamMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+        const beamMesh = new THREE.Mesh(beamGeo, beamMat);
+        laserGroup.add(beamMesh);
+
+        laserGroup.position.set(3, 0, -2); 
+        scene.add(laserGroup);
+
+        const dotGeo = new THREE.SphereGeometry(0.04, 16, 16);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); 
+        const impactDot = new THREE.Mesh(dotGeo, dotMat);
+        scene.add(impactDot);
+        const dotGlow = new THREE.PointLight(0xff0000, 2, 4);
+        impactDot.add(dotGlow);
+
+        // --- 6. Trace Logic ---
+        const MAX_POINTS = 20000;
+        const trailGeo = new THREE.BufferGeometry();
+        const positions = new Float32Array(MAX_POINTS * 3);
+        trailGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        trailGeo.setDrawRange(0, 0);
+
+        const trailMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 1 });
+        const trailLine = new THREE.Line(trailGeo, trailMat);
+        shellGroup.add(trailLine); 
+
+        let drawCount = 0;
+        let lastHitPoint = null;
+        const raycaster = new THREE.Raycaster();
+        
+        // --- 7. Controls & Logic ---
+        const clock = new THREE.Clock();
+        let time = 0;
+
+        const ui = document.getElementById('ui');
+        const speedControl = document.getElementById('speedControl');
+        const oscillateCheck = document.getElementById('oscillateCheck');
+        const laserPosControl = document.getElementById('laserPosControl');
+        const clearBtn = document.getElementById('clearBtn');
+        const fsBtn = document.getElementById('fsBtn');
+
+        function clearTrace() {
+            drawCount = 0;
+            trailGeo.setDrawRange(0, 0);
+            for(let i=0; i<positions.length; i++) positions[i] = 0;
+            trailGeo.attributes.position.needsUpdate = true;
+        }
+
+        clearBtn.addEventListener('click', clearTrace);
+
+        // Fullscreen Logic
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                ui.classList.add('hidden');
+            } else {
+                ui.classList.remove('hidden');
+            }
+        });
+
+        // Keyboard Logic
+        window.addEventListener('keydown', (e) => {
+            const step = 0.1;
+            const minZ = -3.5;
+            const maxZ = 1.6;
+
+            if (e.code === 'Space') {
+                clearTrace();
+            } else if (e.code === 'ArrowRight' || e.code === 'ArrowUp') {
+                // Move towards +Z (Front)
+                oscillateCheck.checked = false; // Disable auto
+                let newVal = parseFloat(laserPosControl.value) + step;
+                if(newVal > maxZ) newVal = maxZ;
+                laserPosControl.value = newVal;
+            } else if (e.code === 'ArrowLeft' || e.code === 'ArrowDown') {
+                // Move towards -Z (Back)
+                oscillateCheck.checked = false; // Disable auto
+                let newVal = parseFloat(laserPosControl.value) - step;
+                if(newVal < minZ) newVal = minZ;
+                laserPosControl.value = newVal;
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            const delta = clock.getDelta();
+            time += delta;
+
+            // 1. Rotate Shell
+            shellGroup.rotation.z += parseFloat(speedControl.value);
+
+            // 2. Control Laser Position
+            let targetZ;
+            if (oscillateCheck.checked) {
+                laserPosControl.disabled = true;
+                targetZ = Math.sin(time * 0.8) * 2.5 - 1.0; 
+                laserGroup.position.z = targetZ;
+                laserPosControl.value = targetZ; // Update slider for visual sync
+            } else {
+                laserPosControl.disabled = false;
+                targetZ = parseFloat(laserPosControl.value);
+                laserGroup.position.z = targetZ;
+            }
+
+            // 3. Aim Laser
+            laserGroup.lookAt(0, 0, laserGroup.position.z);
+
+            // 4. Raycast
+            const origin = laserGroup.position.clone();
+            const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(laserGroup.quaternion);
+
+            raycaster.set(origin, direction);
+
+            const intersects = raycaster.intersectObjects(shellGroup.children.filter(c => c.type === 'Mesh'));
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                const point = hit.point;
+
+                const dist = origin.distanceTo(point);
+                beamMesh.scale.set(1, 1, dist);
+
+                impactDot.position.copy(point);
+                impactDot.visible = true;
+
+                const localPoint = shellGroup.worldToLocal(point.clone());
+                
+                if (!lastHitPoint || localPoint.distanceTo(lastHitPoint) > 0.005) {
+                    if (drawCount < MAX_POINTS) {
+                        positions[drawCount * 3] = localPoint.x;
+                        positions[drawCount * 3 + 1] = localPoint.y;
+                        positions[drawCount * 3 + 2] = localPoint.z;
+                        drawCount++;
+                        trailGeo.setDrawRange(0, drawCount);
+                        trailGeo.attributes.position.needsUpdate = true;
+                        lastHitPoint = localPoint.clone();
+                    }
+                }
+            } else {
+                beamMesh.scale.set(1, 1, 10);
+                impactDot.visible = false;
+                lastHitPoint = null;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>

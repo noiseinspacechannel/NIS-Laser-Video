@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incandescence: Incoherent Light</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        /* Loading Overlay */
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.8); font-size: 1.2rem; pointer-events: none; transition: opacity 0.5s;
+        }
+
+        /* Controls */
+        #controls {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 15px; align-items: center;
+            z-index: 10;
+            background: rgba(20, 20, 25, 0.8);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(4px);
+            transition: opacity 0.3s;
+        }
+        button {
+            background: rgba(50, 50, 60, 0.9); color: #eee; 
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px; cursor: pointer; border-radius: 4px;
+            font-size: 14px; letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        button:hover { background: rgba(80, 80, 100, 1.0); color: white; border-color: rgba(255,255,255,0.8); }
+
+        /* Speed Slider Styles */
+        .control-group {
+            display: flex; flex-direction: column; align-items: center; gap: 4px; color: #ccc; font-size: 11px; font-weight: 600;
+        }
+        .control-group label {
+            white-space: nowrap;
+        }
+        input[type=range] {
+            -webkit-appearance: none; width: 80px; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -5px; box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.3); border-radius: 2px;
+        }
+        
+        /* Full Screen Mode Styles */
+        body.fullscreen-mode {
+            cursor: none;
+        }
+        body.fullscreen-mode #controls {
+            display: none !important;
+        }
+    </style>
+    <!-- Import Map for Three.js modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">Initializing Physics...</div>
+    
+    <div id="controls">
+        <div class="control-group">
+            <label for="speed-slider">Sim Speed</label>
+            <input type="range" id="speed-slider" min="0.1" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label for="oscillation-slider">Wave Freq</label>
+            <input type="range" id="oscillation-slider" min="0.1" max="3.0" step="0.1" value="0.5">
+        </div>
+        <div class="control-group">
+            <label for="wavelength-slider">Wavelength</label>
+            <input type="range" id="wavelength-slider" min="0.3" max="2.0" step="0.1" value="1.0">
+        </div>
+        <button id="btn-replay">Replay</button>
+        <button id="btn-fullscreen">Full Screen & Start</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            duration: 15000, // 15 Seconds total cycle
+            bulbColor: 0xffaa00, // Warm yellow/orange
+            filamentColor: 0xffddaa, // Hot tungsten
+            bloomStrength: 1.5,
+            bloomRadius: 0.5,
+            bloomThreshold: 0.1
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.FogExp2(0x050505, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 2, 6);
+        camera.lookAt(0, 1, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 0.1;
+        controls.maxDistance = 20;
+        controls.target.set(0, 1, 0);
+
+        // --- Post Processing ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = CONFIG.bloomThreshold;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Objects: LIGHTBULB GROUP ---
+        const bulbGroup = new THREE.Group();
+        scene.add(bulbGroup);
+
+        // 1. Base (Socket)
+        const baseGeo = new THREE.CylinderGeometry(0.5, 0.4, 0.8, 32);
+        const baseMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8, roughness: 0.3 });
+        const base = new THREE.Mesh(baseGeo, baseMat);
+        base.position.y = 0.4;
+        bulbGroup.add(base);
+
+        // Threads
+        const threadGeo = new THREE.TorusGeometry(0.46, 0.02, 16, 32);
+        const threadMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.8, roughness: 0.3 });
+        for(let i=0; i<3; i++) {
+            const t = new THREE.Mesh(threadGeo, threadMat);
+            t.rotation.x = Math.PI/2;
+            t.position.y = 0.3 + i*0.15;
+            bulbGroup.add(t);
+        }
+
+        // 2. Glass Bulb
+        const bulbGeo = new THREE.SphereGeometry(1.0, 64, 64);
+        const glassMat = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff, metalness: 0, roughness: 0.05, transmission: 0.95, thickness: 0.1, ior: 1.5,
+            transparent: true, opacity: 0.3
+        });
+        const glass = new THREE.Mesh(bulbGeo, glassMat);
+        glass.position.y = 1.6;
+        bulbGroup.add(glass);
+
+        // 3. Filament (The source of light)
+        const coilCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-0.3, 1.2, 0),
+            new THREE.Vector3(-0.2, 1.3, 0.1),
+            new THREE.Vector3(-0.1, 1.2, -0.1),
+            new THREE.Vector3(0.0, 1.3, 0.1),
+            new THREE.Vector3(0.1, 1.2, -0.1),
+            new THREE.Vector3(0.2, 1.3, 0.1),
+            new THREE.Vector3(0.3, 1.2, 0)
+        ]);
+        const filamentGeo = new THREE.TubeGeometry(coilCurve, 64, 0.015, 8, false);
+        const filamentMat = new THREE.MeshStandardMaterial({
+            color: 0x222222, // Dark when off
+            emissive: CONFIG.filamentColor,
+            emissiveIntensity: 0
+        });
+        const filament = new THREE.Mesh(filamentGeo, filamentMat);
+        bulbGroup.add(filament);
+
+        // Stem support
+        const stemGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.6);
+        const stem1 = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({color: 0xaaaaaa}));
+        stem1.position.set(-0.3, 1.0, 0);
+        bulbGroup.add(stem1);
+        const stem2 = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({color: 0xaaaaaa}));
+        stem2.position.set(0.3, 1.0, 0);
+        bulbGroup.add(stem2);
+
+        // Point Light
+        const bulbLight = new THREE.PointLight(CONFIG.bulbColor, 0, 20);
+        bulbLight.position.set(0, 1.5, 0);
+        scene.add(bulbLight);
+
+        // --- Objects: WAVE GROUP (Micro View) ---
+        const waveGroup = new THREE.Group();
+        waveGroup.visible = false; 
+        scene.add(waveGroup);
+
+        const waves = [];
+        const numWaves = 100;
+        
+        const ZOOM_TARGET = new THREE.Vector3(2.5, 2.0, 0);
+        const FILAMENT_CENTER = new THREE.Vector3(0, 1.3, 0);
+
+        function createWave(index) {
+            const points = [];
+            const segments = 3000; // Increased resolution to prevent aliasing
+            const length = 50.0; // SUPER LONG to act as infinite rays
+            
+            // GEOMETRY: Centered along Z axis (-length/2 to +length/2)
+            // This ensures camera inside the wave sees no start or end
+            for (let i = 0; i <= segments; i++) {
+                const z = (i/segments)*length - (length/2);
+                points.push(new THREE.Vector3(0, 0, z));
+            }
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            
+            // SPECTRAL DISTRIBUTION
+            // Evenly spread from Hue 0 (Red) to Hue ~0.76 (Violet)
+            // Excludes Magenta/Pink range (0.8 - 1.0)
+            const hue = (index / numWaves) * 0.76; 
+            const color = new THREE.Color().setHSL(hue, 1.0, 0.5); 
+
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0,
+                linewidth: 1
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            
+            // Random placement in the zoom volume
+            const range = 2.5; 
+            const px = (Math.random() - 0.5) * range;
+            const py = (Math.random() - 0.5) * range;
+            const pz = (Math.random() - 0.5) * range;
+            
+            // Set local position relative to waveGroup center
+            line.position.set(px, py, pz);
+
+            // CORRECTED DIRECTION:
+            // Calculate direction from Filament Center to this wave's absolute position
+            const absPos = ZOOM_TARGET.clone().add(line.position);
+            
+            // Ideal direction vector (Radial from source)
+            const idealDir = absPos.clone().sub(FILAMENT_CENTER).normalize();
+            
+            // Add slight "incoherence" jitter
+            const jitter = 0.1; 
+            idealDir.x += (Math.random() - 0.5) * jitter;
+            idealDir.y += (Math.random() - 0.5) * jitter;
+            idealDir.z += (Math.random() - 0.5) * jitter;
+            idealDir.normalize();
+
+            // Look At target: position + direction
+            const lookAtTarget = line.position.clone().add(idealDir);
+            line.lookAt(lookAtTarget);
+            
+            // Add a random roll rotation so the "Y" oscillation isn't always up
+            line.rotation.z = Math.random() * Math.PI * 2;
+
+            // PHYSICS MAPPING: Frequency based on Color (Hue)
+            // Low Hue (Red) = Low Frequency (~2.0)
+            // High Hue (Violet) = High Frequency (~6.0)
+            // Base frequency calculation:
+            const baseFreq = 2.0 + (hue * 4.0); 
+
+            line.userData = {
+                phaseOffset: Math.random() * Math.PI * 2,
+                speed: 2 + Math.random() * 2, 
+                amplitude: 0.01 + Math.random() * 0.01,
+                frequency: baseFreq, // Color-dependent frequency
+                originalPositions: geometry.attributes.position.array.slice()
+            };
+            
+            waveGroup.add(line);
+            waves.push(line);
+        }
+
+        for(let i=0; i<numWaves; i++) createWave(i);
+
+        // --- INPUT HANDLING (WASD) ---
+        const keys = { w: false, a: false, s: false, d: false, q: false, e: false };
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (keys.hasOwnProperty(k)) keys[k] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            const k = e.key.toLowerCase();
+            if (keys.hasOwnProperty(k)) keys[k] = false;
+        });
+
+        // --- Animation State ---
+        let accumulatedTime = 0;
+        let waveTime = 0;
+        let lastFrameTime = 0;
+        let isPlaying = false;
+        let speedMultiplier = 1.0;
+        let waveSpeedMultiplier = 0.5; 
+        let wavelengthScale = 1.0; // New state for wavelength scaling
+        let enableFreeFly = false;
+
+        function startAnimation() {
+            accumulatedTime = 0;
+            waveTime = 0;
+            lastFrameTime = performance.now();
+            isPlaying = true;
+            enableFreeFly = false;
+            document.getElementById('loading').style.opacity = 0;
+            
+            // Reset Bulb
+            bulbGroup.visible = true;
+            bulbGroup.scale.set(1,1,1);
+            filament.material.emissiveIntensity = 0;
+            bulbLight.intensity = 0;
+            filament.material.color.setHex(0x222222);
+            
+            // Reset Waves
+            waveGroup.visible = false;
+            waves.forEach(w => w.material.opacity = 0);
+            
+            // Reset Camera
+            camera.position.set(0, 2, 6);
+            camera.lookAt(0, 1, 0);
+            controls.target.set(0, 1, 0);
+            controls.enabled = false; 
+        }
+
+        function updateFreeFly(dt) {
+            if (!enableFreeFly) return;
+
+            const speed = 2.0 * dt; // Movement speed
+            const forward = new THREE.Vector3();
+            camera.getWorldDirection(forward);
+            
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, camera.up).normalize();
+
+            const moveVec = new THREE.Vector3(0,0,0);
+
+            if (keys.w) moveVec.add(forward);
+            if (keys.s) moveVec.sub(forward);
+            if (keys.a) moveVec.sub(right);
+            if (keys.d) moveVec.add(right);
+            if (keys.e) moveVec.add(camera.up);
+            if (keys.q) moveVec.sub(camera.up);
+
+            if (moveVec.lengthSq() > 0) {
+                moveVec.normalize().multiplyScalar(speed);
+                camera.position.add(moveVec);
+                controls.target.add(moveVec); // Keep orbit target in sync
+            }
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            const deltaTime = (time - lastFrameTime) * 0.001; 
+            lastFrameTime = time;
+
+            updateFreeFly(deltaTime);
+
+            if (isPlaying) {
+                accumulatedTime += deltaTime * speedMultiplier;
+                // Integrate wave time separately to handle slider changes smoothly
+                waveTime += deltaTime * speedMultiplier * waveSpeedMultiplier;
+                
+                const t = accumulatedTime; 
+                
+                // --- PHASE 1: LIGHT UP (0s - 6s) ---
+                if (t < 6.0) {
+                    const intensity = Math.min(t / 5.0, 1.0);
+                    filament.material.emissiveIntensity = intensity * 10.0;
+                    bulbLight.intensity = intensity * 2.0;
+                    
+                    if(intensity < 0.2) filament.material.color.setHex(0x330000);
+                    else if(intensity < 0.5) filament.material.color.setHex(0xaa4400);
+                    else filament.material.color.setHex(0xffffaa);
+                } 
+                
+                // --- PHASE 2: ZOOM INTO EMPTY SPACE (6s - 9s) ---
+                else if (t < 9.0) {
+                    filament.material.emissiveIntensity = 10.0;
+                    bulbLight.intensity = 2.0;
+                    
+                    const zoomT = (t - 6.0) / 3.0; 
+                    const easeZoom = zoomT * zoomT * (3 - 2 * zoomT);
+                    
+                    const startPos = new THREE.Vector3(0, 2, 6);
+                    const startTgt = new THREE.Vector3(0, 1, 0);
+                    
+                    // Move inside the void near waves
+                    const targetPos = ZOOM_TARGET.clone();
+                    const camOffset = new THREE.Vector3(-0.5, 0, 1.5); 
+                    const endPos = targetPos.clone().add(camOffset); 
+                    
+                    camera.position.lerpVectors(startPos, endPos, easeZoom);
+                    controls.target.lerpVectors(startTgt, targetPos, easeZoom);
+                } 
+                
+                // --- PHASE 3: REVEAL WAVES & ENABLE CONTROL (9s - 12s) ---
+                else {
+                    if (!enableFreeFly) {
+                        controls.enabled = true; // Enable Mouse
+                        enableFreeFly = true; // Enable Keys
+                    }
+
+                    const transT = Math.min((t - 9.0) / 2.0, 1.0);
+                    
+                    bulbGroup.visible = (transT < 1.0); 
+                    const bulbDim = 1.0 - transT;
+                    filament.material.emissiveIntensity = 10.0 * bulbDim;
+                    bulbLight.intensity = 2.0 * bulbDim; 
+                    bulbGroup.scale.setScalar(1.0 + transT * 0.2); 
+                    
+                    waveGroup.visible = true;
+                    waveGroup.position.copy(ZOOM_TARGET); 
+                    
+                    waves.forEach(w => {
+                        w.material.opacity = transT;
+                    });
+                }
+                
+                // --- WAVE ANIMATION ---
+                if (t > 6.0) {
+                    waves.forEach(w => {
+                        const positions = w.geometry.attributes.position.array;
+                        const orig = w.userData.originalPositions;
+                        const phase = w.userData.phaseOffset;
+                        const speed = w.userData.speed;
+                        const amp = w.userData.amplitude;
+                        const freq = w.userData.frequency;
+                        
+                        for(let i=0; i < positions.length; i+=3) {
+                            const z = orig[i+2]; // Distance along ray
+                            // Standard Sine Wave: Oscillation on local Y
+                            // The line is rotated, so 'local Y' is perpendicular to propagation
+                            // Spatial Frequency (k) is modified by wavelengthScale
+                            // Higher Scale (slider right) = Longer Wavelength = Lower Frequency -> Divide by Scale
+                            const k = freq / wavelengthScale;
+                            
+                            positions[i+1] = Math.sin(z * k - waveTime * speed + phase) * amp;
+                            // X position (positions[i]) stays 0 for 2D wave
+                        }
+                        w.geometry.attributes.position.needsUpdate = true;
+                    });
+                }
+            }
+
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Controls Logic
+        document.getElementById('btn-replay').addEventListener('click', startAnimation);
+        
+        document.getElementById('speed-slider').addEventListener('input', function() {
+            speedMultiplier = parseFloat(this.value);
+        });
+        
+        document.getElementById('oscillation-slider').addEventListener('input', function() {
+            waveSpeedMultiplier = parseFloat(this.value);
+        });
+
+        document.getElementById('wavelength-slider').addEventListener('input', function() {
+            wavelengthScale = parseFloat(this.value);
+        });
+        
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+                startAnimation();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) document.body.classList.add('fullscreen-mode');
+            else document.body.classList.remove('fullscreen-mode');
+        });
+
+        startAnimation();
+        animate(performance.now());
+
+    </script>
+</body>
+</html>

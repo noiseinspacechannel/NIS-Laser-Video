@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Animation 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #252525; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        /* Loading Overlay */
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.8); font-size: 1.2rem; pointer-events: none; transition: opacity 0.5s;
+        }
+
+        /* Labels Container */
+        #labels-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden;
+        }
+
+        /* SVG for Leader Lines */
+        #leader-lines {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        }
+        .leader-line {
+            stroke: rgba(200, 200, 255, 0.6); stroke-width: 1.5; fill: none;
+            transition: opacity 0.5s;
+        }
+
+        /* Individual Labels */
+        .label-box {
+            position: absolute;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 600;
+            background: rgba(30, 30, 35, 0.8);
+            padding: 5px 12px;
+            border-radius: 4px;
+            user-select: none;
+            border: 1px solid rgba(150, 150, 170, 0.5);
+            opacity: 0; /* Hidden by default, animated in */
+            transition: opacity 0.5s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            white-space: nowrap;
+        }
+
+        /* Controls */
+        #controls {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 15px; align-items: center;
+            z-index: 10;
+            background: rgba(30, 30, 35, 0.6);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(4px);
+        }
+        button {
+            background: rgba(40, 45, 60, 0.8); color: #eee; 
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px; cursor: pointer; border-radius: 4px;
+            font-size: 14px; letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        button:hover { background: rgba(70, 80, 100, 0.9); color: white; border-color: rgba(255,255,255,0.8); }
+
+        /* Speed Slider Styles */
+        .control-group {
+            display: flex; align-items: center; gap: 8px; color: #ccc; font-size: 13px; font-weight: 600;
+        }
+        input[type=range] {
+            -webkit-appearance: none; width: 100px; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -5px; box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.3); border-radius: 2px;
+        }
+        
+        /* Progress Bar */
+        #progress-container {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 4px; background: #333;
+        }
+        #progress-bar {
+            width: 0%; height: 100%; background: linear-gradient(90deg, #ff4444, #ff0000); transition: width 0.1s linear;
+        }
+
+        /* Full Screen Mode Styles */
+        body.fullscreen-mode {
+            cursor: none; /* Hides mouse */
+        }
+        /* Hide all controls in fullscreen */
+        body.fullscreen-mode #controls, /* Hides entire control bar including slider */
+        body.fullscreen-mode #progress-container {
+            display: none !important;
+        }
+    </style>
+    <!-- Import Map for Three.js modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">Initializing Simulation...</div>
+    
+    <!-- Labels and Lines Container -->
+    <div id="labels-container">
+        <svg id="leader-lines"></svg>
+    </div>
+
+    <div id="controls">
+        <div class="control-group">
+            <label for="speed-slider">Speed</label>
+            <input type="range" id="speed-slider" min="0.1" max="3.0" step="0.1" value="1.0">
+        </div>
+        <button id="btn-replay">Replay</button>
+        <button id="btn-fullscreen">Full Screen & Start</button>
+    </div>
+    
+    <div id="progress-container"><div id="progress-bar"></div></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            baseDuration: 25000, // 25 Seconds at 1x speed
+            rodColor: 0xa80018, // Ruby
+            pumpColor: 0xffffdd, // Warm white Flashlamp
+            beamColor: 0xff0000, // Pure Laser Red
+            metalColor: 0xcccccc, // Lighter steel for grey background
+            bloomStrength: 0.25, 
+            bloomRadius: 0.8,
+            bloomThreshold: 0.6 
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x252525); // Grey Background
+        scene.fog = new THREE.FogExp2(0x252525, 0.01);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(4, 3, 7);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2; 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 3;
+        controls.maxDistance = 20;
+
+        // --- Post Processing ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = CONFIG.bloomThreshold;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.5); // Brighter ambient for grey scene
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        keyLight.position.set(5, 8, 4);
+        scene.add(keyLight);
+        
+        const rimLight = new THREE.SpotLight(0xffffff, 3, 20, Math.PI/4, 0.5);
+        rimLight.position.set(0, 5, -5);
+        rimLight.lookAt(0, 0, 0);
+        scene.add(rimLight);
+
+        // --- Objects Creation ---
+        const components = {};
+        const labels = [];
+        const svgContainer = document.getElementById('leader-lines');
+        const labelsContainer = document.getElementById('labels-container');
+
+        function createLabel(text, targetPosition, labelOffset, componentName) {
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'label-box';
+            labelDiv.textContent = text;
+            labelsContainer.appendChild(labelDiv);
+
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('class', 'leader-line');
+            svgContainer.appendChild(line);
+
+            labels.push({ 
+                element: labelDiv, 
+                lineElement: line,
+                targetPos: targetPosition, 
+                offset: labelOffset,
+                associatedComponent: componentName,
+                isVisible: false,
+                forceHide: false
+            });
+        }
+
+        // 1. Ruby Rod
+        const rodGeo = new THREE.CylinderGeometry(0.5, 0.5, 4, 64);
+        rodGeo.rotateZ(Math.PI / 2);
+        const rodMat = new THREE.MeshPhysicalMaterial({
+            color: CONFIG.rodColor,
+            metalness: 0.1, roughness: 0.1, transmission: 0.9, thickness: 2.0, ior: 1.76,
+            emissive: CONFIG.beamColor, emissiveIntensity: 0,
+            transparent: true, opacity: 0 // Start hidden
+        });
+        const rod = new THREE.Mesh(rodGeo, rodMat);
+        scene.add(rod);
+        components.rod = rod;
+        createLabel("Gain Medium (Ruby)", new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 100, 0), 'rod');
+
+        // 2. Pump Source
+        const curvePoints = [];
+        const helixRadius = 0.75; const turns = 6.5; const height = 3.8;
+        for (let i = 0; i <= 150; i++) {
+            const t = i / 150;
+            const angle = t * Math.PI * 2 * turns;
+            const x = (t - 0.5) * height;
+            curvePoints.push(new THREE.Vector3(x, Math.cos(angle)*helixRadius, Math.sin(angle)*helixRadius));
+        }
+        const helixCurve = new THREE.CatmullRomCurve3(curvePoints);
+        const tubeGeo = new THREE.TubeGeometry(helixCurve, 150, 0.07, 16, false);
+        const pumpMat = new THREE.MeshStandardMaterial({
+            color: 0xeeeeee, emissive: CONFIG.pumpColor, emissiveIntensity: 0,
+            roughness: 0.3, metalness: 0.8,
+            transparent: true, opacity: 0
+        });
+        const pump = new THREE.Mesh(tubeGeo, pumpMat);
+        scene.add(pump);
+        components.pump = pump;
+        createLabel("Flashlamp (Pump)", new THREE.Vector3(-1.0, 0.7, 0), new THREE.Vector3(-80, 80, 0), 'pump');
+
+        // 3. Mirrors
+        const mirrorGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 64);
+        mirrorGeo.rotateZ(Math.PI / 2);
+        const mirrorMat = new THREE.MeshStandardMaterial({
+            color: CONFIG.metalColor, metalness: 0.9, roughness: 0.15,
+            transparent: true, opacity: 0
+        });
+        
+        const mirrorHR = new THREE.Mesh(mirrorGeo, mirrorMat);
+        mirrorHR.position.set(-2.2, 0, 0);
+        scene.add(mirrorHR);
+        components.mirrorHR = mirrorHR;
+        createLabel("High Reflector", new THREE.Vector3(-2.2, 0, 0), new THREE.Vector3(-100, -80, 0), 'mirrorHR');
+
+        const mirrorOC = new THREE.Mesh(mirrorGeo, mirrorMat.clone());
+        mirrorOC.position.set(2.2, 0, 0);
+        scene.add(mirrorOC);
+        components.mirrorOC = mirrorOC;
+        createLabel("Output Coupler", new THREE.Vector3(2.2, 0, 0), new THREE.Vector3(100, -80, 0), 'mirrorOC');
+
+        // 4. Beams
+        // Internal Standing Wave
+        const beamIntGeo = new THREE.CylinderGeometry(0.15, 0.15, 4.2, 32);
+        beamIntGeo.rotateZ(Math.PI / 2);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: CONFIG.beamColor, transparent: true, opacity: 0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const beamInternal = new THREE.Mesh(beamIntGeo, beamMat);
+        scene.add(beamInternal);
+        components.beamInt = beamInternal;
+
+        // External Beam
+        const beamExtGeo = new THREE.CylinderGeometry(0.1, 0.1, 15, 32);
+        beamExtGeo.rotateZ(Math.PI / 2);
+        beamExtGeo.translate(7.5, 0, 0); 
+        const beamExternal = new THREE.Mesh(beamExtGeo, beamMat.clone());
+        beamExternal.position.set(2.25, 0, 0);
+        beamExternal.scale.set(1, 1, 0); 
+        scene.add(beamExternal);
+        components.beamExt = beamExternal;
+
+
+        // --- Animation Logic ---
+        let accumulatedTime = 0;
+        let lastFrameTime = 0;
+        let isPlaying = false;
+        let speedMultiplier = 1.0;
+
+        function startAnimation() {
+            accumulatedTime = 0;
+            lastFrameTime = performance.now();
+            isPlaying = true;
+            document.getElementById('loading').style.opacity = 0;
+            
+            // Reset Visibilities
+            Object.values(components).forEach(c => {
+                if(c.material.transparent) c.material.opacity = 0;
+                if(c.material.emissiveIntensity !== undefined) c.material.emissiveIntensity = 0;
+            });
+            components.beamExt.scale.set(1,1,0);
+            
+            labels.forEach(l => {
+                l.isVisible = false;
+                l.forceHide = false;
+                l.element.style.opacity = 0;
+                l.lineElement.style.opacity = 0;
+            });
+        }
+
+        // Manage label visibility based on time window
+        function manageLabel(labelName, currentTime, windowStart, windowEnd) {
+            const lbl = labels.find(l => l.associatedComponent === labelName);
+            if (!lbl) return;
+            if (currentTime >= windowStart && currentTime < windowEnd) {
+                lbl.isVisible = true;
+            } else {
+                lbl.isVisible = false;
+            }
+        }
+
+        function fadeIn(component, t, speed=5) {
+            const val = Math.min(t * speed, 1);
+            if (component.material.transparent) component.material.opacity = val;
+        }
+
+        function updateLabels() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const widthHalf = width / 2;
+            const heightHalf = height / 2;
+
+            labels.forEach(lbl => {
+                if (!lbl.isVisible) {
+                    lbl.element.style.opacity = 0;
+                    lbl.lineElement.style.opacity = 0;
+                    return;
+                }
+
+                const targetScreenPos = lbl.targetPos.clone().project(camera);
+                targetScreenPos.x = (targetScreenPos.x * widthHalf) + widthHalf;
+                targetScreenPos.y = -(targetScreenPos.y * heightHalf) + heightHalf;
+
+                const labelX = targetScreenPos.x + lbl.offset.x;
+                const labelY = targetScreenPos.y + lbl.offset.y;
+
+                lbl.element.style.transform = `translate(${labelX}px, ${labelY}px) translate(-50%, -50%)`;
+                lbl.lineElement.setAttribute('x1', targetScreenPos.x);
+                lbl.lineElement.setAttribute('y1', targetScreenPos.y);
+                lbl.lineElement.setAttribute('x2', labelX);
+                lbl.lineElement.setAttribute('y2', labelY);
+
+                const toCamera = camera.position.clone().sub(lbl.targetPos);
+                if (targetScreenPos.z > 1 || toCamera.length() > 25) {
+                    lbl.element.style.opacity = 0;
+                    lbl.lineElement.style.opacity = 0;
+                } else {
+                    lbl.element.style.opacity = 1;
+                    lbl.lineElement.style.opacity = 1;
+                }
+            });
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            const deltaTime = time - lastFrameTime;
+            lastFrameTime = time;
+
+            if (isPlaying) {
+                accumulatedTime += deltaTime * speedMultiplier;
+                
+                let progress = accumulatedTime / CONFIG.baseDuration;
+                if (progress > 1) progress = 1;
+                
+                document.getElementById('progress-bar').style.width = (progress * 100) + '%';
+
+                // --- SEQUENTIAL ASSEMBLY (0 - 40%) ---
+                // Keep this discrete as requested
+                
+                // Labels logic
+                manageLabel('rod', progress, 0.02, 0.12);
+                manageLabel('pump', progress, 0.12, 0.22);
+                manageLabel('mirrorHR', progress, 0.22, 0.32);
+                manageLabel('mirrorOC', progress, 0.32, 0.42);
+
+                if (progress < 0.10) {
+                    fadeIn(components.rod, progress, 10);
+                } else if (progress < 0.20) {
+                    components.rod.material.opacity = 1;
+                    fadeIn(components.pump, progress - 0.10, 10);
+                } else if (progress < 0.30) {
+                    components.pump.material.opacity = 1;
+                    fadeIn(components.mirrorHR, progress - 0.20, 10);
+                } else if (progress < 0.40) {
+                    components.mirrorHR.material.opacity = 1;
+                    fadeIn(components.mirrorOC, progress - 0.30, 10);
+                }
+                
+                // --- CONTINUOUS OPERATION (40% - 100%) ---
+                else {
+                    components.mirrorOC.material.opacity = 1;
+                    
+                    // Unified timeline for physics from 40% to 100%
+                    // We map the remaining 60% of time to a 0.0-1.0 scale
+                    const opT = (progress - 0.40) / 0.60;
+                    
+                    // 1. Pump turns on quickly
+                    let pumpIntensity = Math.min(opT * 5.0, 1.0);
+                    // Add slight jitter only when fully on
+                    if (pumpIntensity >= 1.0) pumpIntensity += (Math.random() * 0.05);
+                    components.pump.material.emissiveIntensity = pumpIntensity * 5.0;
+
+                    // 2. Rod glows as it absorbs pump energy (lagging slightly)
+                    // Starts at 0.05, ramps up slower
+                    let rodIntensity = Math.max(0, (opT - 0.05) * 2.5);
+                    rodIntensity = Math.min(rodIntensity, 1.0);
+                    components.rod.material.emissiveIntensity = rodIntensity * 0.8;
+
+                    // 3. Internal Beam appears *while* rod is growing (overlapping)
+                    // LINEAR AND SLOW: Just like the rod
+                    // Starts at 0.10 (only slightly after rod starts)
+                    // Duration: Ramps up over ~0.6 normalized time units (slow)
+                    let beamT = Math.max(0, (opT - 0.10) * 1.5); 
+                    beamT = Math.min(beamT, 1.0);
+                    
+                    // Linear opacity mapping
+                    let beamOpacity = beamT;
+                    components.beamInt.material.opacity = beamOpacity;
+
+                    // 4. External Beam shoots out and brightens
+                    // Starts at 0.6, finishes at 0.9 for length
+                    let extLengthT = Math.max(0, (opT - 0.6) / 0.3);
+                    extLengthT = Math.min(extLengthT, 1.0);
+                    
+                    // External beam opacity should roughly match internal beam opacity
+                    // but maybe capped at 1.0 only when fully extended
+                    components.beamExt.material.opacity = beamOpacity; 
+                    components.beamExt.scale.z = extLengthT;
+                }
+            }
+
+            updateLabels();
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Event Listeners for Controls
+        document.getElementById('btn-replay').addEventListener('click', startAnimation);
+        
+        document.getElementById('speed-slider').addEventListener('input', function() {
+            speedMultiplier = parseFloat(this.value);
+        });
+        
+        // Fullscreen Logic
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+                // Start animation on enter fullscreen
+                startAnimation();
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                document.body.classList.add('fullscreen-mode');
+            } else {
+                document.body.classList.remove('fullscreen-mode');
+            }
+        });
+
+        startAnimation();
+        animate(performance.now());
+
+    </script>
+</body>
+</html>

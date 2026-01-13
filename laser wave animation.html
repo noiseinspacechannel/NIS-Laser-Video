@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coherent Laser Light with Gaussian Beam</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #252525; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.8); font-size: 1.2rem; pointer-events: none; transition: opacity 0.5s;
+        }
+
+        #labels-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden;
+        }
+
+        #leader-lines {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        }
+        .leader-line {
+            stroke: rgba(200, 200, 255, 0.6); stroke-width: 1.5; fill: none;
+            transition: opacity 0.5s;
+        }
+
+        .label-box {
+            position: absolute;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 600;
+            background: rgba(30, 30, 35, 0.8);
+            padding: 5px 12px;
+            border-radius: 4px;
+            user-select: none;
+            border: 1px solid rgba(150, 150, 170, 0.5);
+            opacity: 0;
+            transition: opacity 0.5s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            white-space: nowrap;
+        }
+
+        #controls {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 15px; align-items: center;
+            z-index: 10;
+            background: rgba(30, 30, 35, 0.6);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(4px);
+        }
+        button {
+            background: rgba(40, 45, 60, 0.8); color: #eee; 
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px; cursor: pointer; border-radius: 4px;
+            font-size: 14px; letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        button:hover { background: rgba(70, 80, 100, 0.9); color: white; border-color: rgba(255,255,255,0.8); }
+
+        .control-group {
+            display: flex; flex-direction: column; align-items: center; gap: 4px; color: #ccc; font-size: 11px; font-weight: 600;
+        }
+        .control-group label {
+            white-space: nowrap;
+        }
+        input[type=range] {
+            -webkit-appearance: none; width: 80px; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -5px; box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: rgba(255,255,255,0.3); border-radius: 2px;
+        }
+        
+        #progress-container {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 4px; background: #333;
+        }
+        #progress-bar {
+            width: 0%; height: 100%; background: linear-gradient(90deg, #ff4444, #ff0000); transition: width 0.1s linear;
+        }
+
+        body.fullscreen-mode {
+            cursor: none; 
+        }
+        body.fullscreen-mode #controls,
+        body.fullscreen-mode #progress-container {
+            display: none !important;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">Initializing Laser Physics...</div>
+    
+    <div id="labels-container">
+        <svg id="leader-lines"></svg>
+    </div>
+
+    <div id="controls">
+        <div class="control-group">
+            <label for="speed-slider">Sim Speed</label>
+            <input type="range" id="speed-slider" min="0.1" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label for="waist-slider">Beam Waist</label>
+            <input type="range" id="waist-slider" min="0.01" max="0.15" step="0.005" value="0.08">
+        </div>
+        <div class="control-group">
+            <label for="wavelength-slider">Wavelength</label>
+            <input type="range" id="wavelength-slider" min="0.5" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label for="oscillation-slider">Wave Freq</label>
+            <input type="range" id="oscillation-slider" min="0.1" max="5.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label for="length-slider">Beam Length</label>
+            <input type="range" id="length-slider" min="15" max="2000" step="10" value="15">
+        </div>
+        <button id="btn-replay">Replay</button>
+        <button id="btn-fullscreen">Full Screen & Start</button>
+    </div>
+    
+    <div id="progress-container"><div id="progress-bar"></div></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            baseDuration: 15000, // 15 Seconds
+            rodColor: 0xa80018, 
+            pumpColor: 0xffffdd, 
+            beamColor: 0xff0000, 
+            metalColor: 0xcccccc, 
+            lensColor: 0xaaccff,
+            bloomStrength: 0.3, 
+            bloomRadius: 0.8,
+            bloomThreshold: 0.6 
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x252525);
+        scene.fog = new THREE.FogExp2(0x252525, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        // Start position: viewing the whole laser
+        camera.position.set(4, 3, 7);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2; 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 0.1;
+        controls.maxDistance = 20;
+
+        // --- Post Processing ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = CONFIG.bloomThreshold;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        keyLight.position.set(5, 8, 4);
+        scene.add(keyLight);
+        
+        const rimLight = new THREE.SpotLight(0xffffff, 3, 20, Math.PI/4, 0.5);
+        rimLight.position.set(0, 5, -5);
+        rimLight.lookAt(0, 0, 0);
+        scene.add(rimLight);
+
+        // --- Macro Objects Group ---
+        const macroGroup = new THREE.Group();
+        scene.add(macroGroup);
+
+        // 1. Ruby Rod
+        const rodGeo = new THREE.CylinderGeometry(0.5, 0.5, 4, 64);
+        rodGeo.rotateZ(Math.PI / 2);
+        const rodMat = new THREE.MeshPhysicalMaterial({
+            color: CONFIG.rodColor, metalness: 0.1, roughness: 0.1, transmission: 0.9, thickness: 2.0, ior: 1.76,
+            emissive: CONFIG.beamColor, emissiveIntensity: 0.8, // Start ON
+            transparent: true, opacity: 1
+        });
+        const rod = new THREE.Mesh(rodGeo, rodMat);
+        macroGroup.add(rod);
+
+        // 2. Pump Source
+        const curvePoints = [];
+        const helixRadius = 0.75; const turns = 6.5; const height = 3.8;
+        for (let i = 0; i <= 150; i++) {
+            const t = i / 150;
+            const angle = t * Math.PI * 2 * turns;
+            const x = (t - 0.5) * height;
+            curvePoints.push(new THREE.Vector3(x, Math.cos(angle)*helixRadius, Math.sin(angle)*helixRadius));
+        }
+        const helixCurve = new THREE.CatmullRomCurve3(curvePoints);
+        const tubeGeo = new THREE.TubeGeometry(helixCurve, 150, 0.07, 16, false);
+        const pumpMat = new THREE.MeshStandardMaterial({
+            color: 0xeeeeee, emissive: CONFIG.pumpColor, emissiveIntensity: 5.0, // Start ON
+            roughness: 0.3, metalness: 0.8, transparent: true, opacity: 1
+        });
+        const pump = new THREE.Mesh(tubeGeo, pumpMat);
+        macroGroup.add(pump);
+
+        // 3. Mirrors
+        const mirrorGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 64);
+        mirrorGeo.rotateZ(Math.PI / 2);
+        const mirrorMat = new THREE.MeshStandardMaterial({
+            color: CONFIG.metalColor, metalness: 0.9, roughness: 0.15, transparent: true, opacity: 1
+        });
+        
+        const mirrorHR = new THREE.Mesh(mirrorGeo, mirrorMat);
+        mirrorHR.position.set(-2.2, 0, 0);
+        macroGroup.add(mirrorHR);
+
+        const mirrorOC = new THREE.Mesh(mirrorGeo, mirrorMat.clone());
+        mirrorOC.position.set(2.2, 0, 0);
+        macroGroup.add(mirrorOC);
+
+        // 4. Output Lens
+        const lensGeo = new THREE.SphereGeometry(0.5, 32, 16);
+        lensGeo.scale(0.2, 1.0, 1.0); // Flatten to make a lens shape
+        const lensMat = new THREE.MeshPhysicalMaterial({
+            color: CONFIG.lensColor, metalness: 0.0, roughness: 0.05, transmission: 0.95, thickness: 0.5, ior: 1.5,
+            transparent: true, opacity: 1
+        });
+        const lens = new THREE.Mesh(lensGeo, lensMat);
+        lens.position.set(2.5, 0, 0);
+        macroGroup.add(lens);
+
+        // 5. Beams (Macro)
+        // Internal
+        const beamIntGeo = new THREE.CylinderGeometry(0.15, 0.15, 4.2, 32);
+        beamIntGeo.rotateZ(Math.PI / 2);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: CONFIG.beamColor, transparent: true, opacity: 0.8,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const beamInternal = new THREE.Mesh(beamIntGeo, beamMat);
+        macroGroup.add(beamInternal);
+
+        // External ( Simplified visualization, waves will show the real physics)
+        const beamExtGeo = new THREE.CylinderGeometry(0.15, 0.15, 15, 32);
+        beamExtGeo.rotateZ(Math.PI / 2);
+        beamExtGeo.translate(7.5, 0, 0); 
+        const beamExternal = new THREE.Mesh(beamExtGeo, beamMat.clone());
+        beamExternal.material.opacity = 0.8;
+        beamExternal.position.set(2.5, 0, 0);
+        beamExternal.scale.set(1, 1, 1); 
+        macroGroup.add(beamExternal);
+
+
+        // --- Micro Objects Group (Waves) ---
+        const microGroup = new THREE.Group();
+        microGroup.visible = false;
+        scene.add(microGroup);
+
+        const waves = [];
+        const numWaves = 150; 
+        
+        // Gaussian Beam Parameters
+        const x_lens = 2.5;
+        const x_waist = 10.0; // Waist position
+        const w_lens = 0.15; // Beam radius at lens
+        
+        // Adjustable parameters
+        let currentW0 = 0.08; 
+        let currentWavelengthScale = 1.0;
+        let currentBeamLength = 15.0; // Default matches initial config
+
+        // Box-Muller transform
+        function getGaussianRandom() {
+            let u = 0, v = 0;
+            while(u === 0) u = Math.random();
+            while(v === 0) v = Math.random();
+            return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+        }
+
+        const MAX_WAVE_LENGTH = 2000.0; // Max possible length for slider
+        const WAVE_SEGMENTS = 50000; // Increased to 50k for smooth long waves
+
+        function createGaussianWave() {
+            // Generate starting ratio at the lens
+            // r_ratio = r_start / w_lens
+            // We store this ratio so we can re-evaluate r(x) dynamically
+            const r_ratio = Math.abs(getGaussianRandom()) / 1.5; 
+            const theta = Math.random() * Math.PI * 2;
+            
+            const points = [];
+            // Create points up to MAX possible length
+            const x_start = -2.0; 
+            const x_end = MAX_WAVE_LENGTH; 
+            
+            // Initial geometry
+            for (let i = 0; i <= WAVE_SEGMENTS; i++) {
+                const x = x_start + (i / WAVE_SEGMENTS) * (x_end - x_start);
+                points.push(new THREE.Vector3(x, 0, 0));
+            }
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            // Draw range will be updated based on slider
+            geometry.setDrawRange(0, Math.floor(WAVE_SEGMENTS * (15.0 / MAX_WAVE_LENGTH)));
+
+            const color = new THREE.Color(0xff0000); 
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, material);
+
+            line.userData = {
+                phaseOffset: 0, 
+                speed: 5.0,     
+                amplitude: 0.05,
+                frequency: 4.0, 
+                r_ratio: r_ratio, // Stored ratio
+                theta: theta,     // Stored angle
+                originalX: geometry.attributes.position.array.filter((_, i) => i % 3 === 0)
+            };
+            
+            microGroup.add(line);
+            waves.push(line);
+        }
+
+        for(let i=0; i<numWaves; i++) createGaussianWave();
+
+
+        // --- Animation Logic ---
+        let accumulatedTime = 0;
+        let waveTime = 0;
+        let lastFrameTime = 0;
+        let isPlaying = false;
+        let speedMultiplier = 1.0;
+        let waveSpeedMultiplier = 1.0;
+        
+        // ZOOM TO LEFT of waist (near lens)
+        // Lens is at 2.5. Let's look at x=4.0
+        const END_CAM_POS = new THREE.Vector3(4.0, 0, 1.5); 
+        const END_LOOK_AT = new THREE.Vector3(4.0, 0, 0);
+
+        function updateWaveLength(length) {
+            currentBeamLength = length;
+            // Calculate how many points to draw
+            const fraction = Math.min(length / MAX_WAVE_LENGTH, 1.0);
+            const drawCount = Math.floor(WAVE_SEGMENTS * fraction);
+            
+            waves.forEach(w => {
+                w.geometry.setDrawRange(0, drawCount);
+            });
+        }
+
+        function startAnimation() {
+            accumulatedTime = 0;
+            waveTime = 0;
+            lastFrameTime = performance.now();
+            isPlaying = true;
+            document.getElementById('loading').style.opacity = 0;
+            
+            // Reset Macro
+            macroGroup.visible = true;
+            macroGroup.scale.set(1,1,1);
+            macroGroup.position.set(0,0,0);
+            rod.material.opacity = 1;
+            pump.material.opacity = 1;
+            mirrorHR.material.opacity = 1;
+            mirrorOC.material.opacity = 1;
+            lens.material.opacity = 1;
+            beamInternal.material.opacity = 0.8;
+            beamExternal.material.opacity = 0.8;
+            
+            // Reset Micro
+            microGroup.visible = false;
+            microGroup.position.set(0,0,0); 
+            waves.forEach(w => w.material.opacity = 0);
+            
+            camera.position.set(4, 3, 7);
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0, 0, 0);
+            controls.enabled = false; 
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            const deltaTime = (time - lastFrameTime) * 0.001; 
+            lastFrameTime = time;
+
+            if (isPlaying) {
+                accumulatedTime += deltaTime * speedMultiplier;
+                waveTime += deltaTime * speedMultiplier * waveSpeedMultiplier;
+                const t = accumulatedTime;
+                
+                // --- TIMELINE LOGIC ---
+                if (t < 3.0) {
+                    pump.material.emissiveIntensity = 5.0 + Math.random() * 0.5;
+                } else if (t < 7.0) {
+                    const zoomT = (t - 3.0) / 4.0;
+                    const ease = zoomT * zoomT * (3 - 2 * zoomT);
+                    const startPos = new THREE.Vector3(4, 3, 7);
+                    const startTgt = new THREE.Vector3(0, 0, 0);
+                    camera.position.lerpVectors(startPos, END_CAM_POS, ease);
+                    controls.target.lerpVectors(startTgt, END_LOOK_AT, ease);
+                } else {
+                    controls.enabled = true; 
+                    const transT = Math.min((t - 7.0) / 2.0, 1.0);
+                    const macroOpacity = 1.0 - transT;
+                    rod.material.opacity = macroOpacity;
+                    pump.material.opacity = macroOpacity;
+                    mirrorHR.material.opacity = macroOpacity;
+                    mirrorOC.material.opacity = macroOpacity;
+                    lens.material.opacity = macroOpacity;
+                    beamInternal.material.opacity = 0.8 * macroOpacity;
+                    beamExternal.material.opacity = 0.8 * macroOpacity;
+                    if (transT > 0.95) macroGroup.visible = false;
+                    microGroup.visible = true;
+                    waves.forEach(w => w.material.opacity = transT);
+                }
+                
+                // --- PHYSICS UPDATE ---
+                const zR = Math.abs(x_lens - x_waist) / Math.sqrt(Math.pow(w_lens/currentW0, 2) - 1);
+                
+                const visibleCount = waves[0].geometry.drawRange.count;
+
+                waves.forEach(w => {
+                    const positions = w.geometry.attributes.position.array;
+                    const x_vals = w.userData.originalX;
+                    const r_ratio = w.userData.r_ratio;
+                    const theta = w.userData.theta;
+                    const phase = w.userData.phaseOffset;
+                    const speed = w.userData.speed;
+                    const amp = w.userData.amplitude;
+                    const freq = w.userData.frequency;
+                    
+                    const k = freq / currentWavelengthScale;
+
+                    for(let i=0; i < visibleCount; i++) {
+                        const x = x_vals[i];
+                        
+                        const wx = currentW0 * Math.sqrt(1 + Math.pow((x - x_waist) / zR, 2));
+                        const r = r_ratio * wx;
+                        
+                        const y_base = r * Math.cos(theta);
+                        const z_base = r * Math.sin(theta);
+                        
+                        const osc = Math.sin(x * k - waveTime * speed + phase) * amp;
+                        
+                        const idx = i * 3;
+                        positions[idx] = x;
+                        positions[idx+1] = y_base + osc; 
+                        positions[idx+2] = z_base;
+                    }
+                    w.geometry.attributes.position.needsUpdate = true;
+                });
+            }
+
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        document.getElementById('btn-replay').addEventListener('click', startAnimation);
+        
+        document.getElementById('speed-slider').addEventListener('input', function() {
+            speedMultiplier = parseFloat(this.value);
+        });
+        
+        document.getElementById('oscillation-slider').addEventListener('input', function() {
+            waveSpeedMultiplier = parseFloat(this.value);
+        });
+
+        document.getElementById('waist-slider').addEventListener('input', function() {
+            currentW0 = parseFloat(this.value);
+        });
+
+        document.getElementById('wavelength-slider').addEventListener('input', function() {
+            currentWavelengthScale = parseFloat(this.value);
+        });
+
+        document.getElementById('length-slider').addEventListener('input', function() {
+            updateWaveLength(parseFloat(this.value));
+        });
+        
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+                startAnimation();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) document.body.classList.add('fullscreen-mode');
+            else document.body.classList.remove('fullscreen-mode');
+        });
+
+        // Initialize beam length correctly on load
+        updateWaveLength(15);
+        startAnimation();
+        animate(performance.now());
+
+    </script>
+</body>
+</html>

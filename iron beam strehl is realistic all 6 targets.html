@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Engagement Analysis: 6-Target Array</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+        }
+        .laser-beam {
+            background: linear-gradient(90deg, 
+                rgba(255, 0, 0, 0) 0%, 
+                rgba(255, 50, 50, 0.3) 20%, 
+                rgba(255, 255, 255, 0.8) 50%, 
+                rgba(255, 50, 50, 0.3) 80%, 
+                rgba(255, 0, 0, 0) 100%);
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.4);
+            will-change: transform, width, left, height, opacity;
+            transform: translateX(-50%); 
+            border-radius: 4px;
+        }
+        
+        .status-icon {
+            opacity: 0;
+            transform: scale(0.5);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .status-icon.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        #loading-overlay {
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        #loading-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        .sim-card-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+        }
+
+        body.is-fullscreen header { display: none !important; }
+        body.is-fullscreen main { padding: 0; }
+        body.is-fullscreen .sim-grid { gap: 1px; padding: 0; background: #1e293b; height: 100vh; }
+        body.is-fullscreen .sim-card { border-radius: 0; border: none; }
+        body.is-fullscreen #grid-container { height: 100vh; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <header class="bg-slate-900 border-b border-slate-700 p-4 flex justify-between items-center shrink-0 h-16">
+        <div>
+            <h1 class="text-xl font-bold text-sky-400">Laser Engagement Analysis</h1>
+            <p class="text-xs text-slate-400">1:1 Physical Aspect Ratio | FDM Solver | 100 kW</p>
+        </div>
+        
+        <div class="flex items-center gap-4">
+             <div class="text-right text-xs text-slate-400 w-24">
+                <span id="sim-time-global" class="text-xl font-mono text-white block">0.00 s</span>
+                Engagement
+             </div>
+
+             <div class="flex flex-col w-32">
+                 <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                     <span>Playback Speed</span>
+                     <span id="speedVal" class="text-sky-400 font-bold">1.0x</span>
+                 </div>
+                 <input type="range" id="speedSlider" min="0.1" max="2.0" step="0.1" value="1.0" class="h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+             </div>
+
+             <div class="flex items-center gap-2">
+                <label class="text-xs font-bold text-slate-300 uppercase">Range:</label>
+                <select id="rangeSelect" class="bg-slate-800 border border-sky-500/50 text-sky-400 text-sm rounded px-3 py-1 focus:outline-none">
+                    <option value="1,0.68">1 km (Spot: 2.8mm)</option>
+                    <option value="2,0.41">2 km (Spot: 5.5mm)</option>
+                    <option value="4,0.12">4 km (Spot: 1.1cm)</option>
+                    <option value="8,0.01">8 km (Spot: 2.2cm)</option>
+                </select>
+            </div>
+            
+            <div class="h-8 w-px bg-slate-700 mx-2"></div>
+
+            <button id="resetFrameBtn" class="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded shadow transition-colors" title="Reset to Start (R)">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.707-10.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L9.414 11H13a1 1 0 100-2H9.414l1.293-1.293z" clip-rule="evenodd" />
+                </svg>
+            </button>
+
+            <button id="runBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded shadow transition-colors flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                </svg>
+                <span id="runBtnText">RUN SIM</span>
+            </button>
+            
+            <button id="fullscreenBtn" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-colors" title="Fullscreen">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 010 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+            </button>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden bg-slate-950 relative">
+        <div id="loading-overlay" class="absolute inset-0 bg-slate-900/80 z-50 flex flex-col items-center justify-center opacity-0 pointer-events-none backdrop-blur-sm">
+            <div class="w-64 bg-slate-700 rounded-full h-4 mb-4 overflow-hidden">
+                <div id="progress-bar" class="bg-sky-500 h-full w-0 transition-all duration-75"></div>
+            </div>
+            <div class="text-sky-400 font-mono font-bold animate-pulse">Computing Physics...</div>
+        </div>
+
+        <div class="flex-1 p-2 grid grid-cols-3 grid-rows-2 gap-2 min-h-0 sim-grid" id="grid-container">
+            <!-- Cards injected by JS -->
+        </div>
+    </div>
+
+<script>
+(function() {
+    // --- Constants ---
+    const POWER = 100000; 
+    const BASE_SPOT_R = 0.0028; 
+    const AMBIENT_TEMP = 300;
+    const GRID_Z = 20; 
+    const GRID_X = 200; 
+    const SIM_DURATION = 5.0; 
+    const FPS = 30; 
+    const TOTAL_FRAMES = Math.ceil(SIM_DURATION * FPS);
+    const DT_FRAME = 1 / FPS;
+
+    // --- Materials Library ---
+    const MATERIALS = {
+        steel: { name: "Steel", rho: 7850, cp: 490, k: 45, tm: 1800, abs: 0.35 },
+        aluminum: { name: "Aluminum", rho: 2700, cp: 896, k: 167, tm: 933, abs: 0.12 }, 
+        cast_iron: { name: "Cast Iron", rho: 7200, cp: 460, k: 52, tm: 1473, abs: 0.60 },
+        composite: { name: "Carbon Fiber", rho: 1600, cp: 1200, k: 25, tm: 800, abs: 0.85 } 
+    };
+
+    // --- Scenarios ---
+    const SCENARIOS = [
+        { id: 0, name: "Artillery Body", type: "spin", mat: MATERIALS.steel, thick: 0.015, width: 0.49, rpm: 12000, dwell: 2.5 },
+        { id: 1, name: "Artillery Fuse", type: "spin", mat: MATERIALS.aluminum, thick: 0.005, width: 0.040, rpm: 12000, dwell: 2.5 },
+        { id: 2, name: "Rocket", type: "spin", mat: MATERIALS.steel, thick: 0.0025, width: 0.70, rpm: 12, dwell: 2.5 },
+        
+        { id: 3, name: "Mortar", type: "static", mat: MATERIALS.cast_iron, thick: 0.010, width: 0.10, dwell: 5.0 },
+        { id: 4, name: "Drone", type: "static", mat: MATERIALS.composite, thick: 0.002, width: 0.03, dwell: 5.0 },
+        { id: 5, name: "Cruise Missile", type: "static", mat: MATERIALS.aluminum, thick: 0.003, width: 0.03, dwell: 5.0 }
+    ];
+
+    // --- State ---
+    let sims = [];
+    let rangeScale = 1;
+    let strehlRatio = 0.68; 
+    let playbackSpeed = 1.0;
+    let recordedFrames = []; 
+    let isPlaying = false;
+    let playbackIndex = 0;
+    let animationFrameId = null;
+
+    // --- DOM Gen ---
+    function generateCards() {
+        const container = document.getElementById('grid-container');
+        container.innerHTML = '';
+        
+        const rangeSelect = document.getElementById('rangeSelect');
+        const rangeText = rangeSelect.options[rangeSelect.selectedIndex].text.split('(')[0].trim();
+        
+        SCENARIOS.forEach(s => {
+            const isSpin = s.type.includes("spin");
+            const icon = isSpin 
+                ? `<svg class="w-3 h-3 text-sky-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`
+                : `<svg class="w-3 h-3 text-rose-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>`;
+
+            const html = `
+            <div class="bg-slate-900 border border-slate-700 rounded flex flex-col relative overflow-hidden group sim-card select-none">
+                <div class="absolute top-2 left-2 z-10 bg-black/70 backdrop-blur px-2 py-1 rounded border border-slate-600">
+                    <div class="flex items-center gap-2 mb-0.5">
+                        <h3 class="text-slate-200 font-bold text-xs flex items-center">${icon} ${s.name}</h3>
+                        <span class="text-[9px] font-mono text-sky-300 border border-sky-500/30 px-1 rounded bg-sky-900/20">${rangeText}</span>
+                    </div>
+                    <div class="text-[9px] text-orange-300 font-mono mb-0.5">Strehl Ratio = ${strehlRatio.toFixed(2)}</div>
+                    <p class="text-[10px] text-slate-400">
+                        ${s.mat.name} • ${(s.thick*1000).toFixed(1)}mm • ${isSpin ? s.rpm.toLocaleString() + ' RPM' : 'Static'}
+                    </p>
+                </div>
+                
+                <div class="absolute top-2 right-2 z-10 text-right">
+                     <div class="bg-black/60 rounded px-2 py-1 mb-1 border border-slate-700/50">
+                        <div class="text-xs font-mono font-bold text-white" id="status-time-${s.id}">0.00s</div>
+                        <div class="text-[9px] text-slate-400 uppercase">Limit: ${s.dwell}s</div>
+                     </div>
+                     <div class="text-lg font-mono font-bold text-sky-400 drop-shadow-md" id="temp-${s.id}">300 K</div>
+                </div>
+
+                <div id="status-success-${s.id}" class="status-icon absolute bottom-2 left-0 right-0 z-20 flex justify-center pointer-events-none">
+                    <div class="bg-emerald-500 rounded-full p-2 shadow-lg shadow-emerald-500/50">
+                        <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                </div>
+                <div id="status-fail-${s.id}" class="status-icon absolute bottom-2 left-0 right-0 z-20 flex justify-center pointer-events-none">
+                    <div class="bg-rose-600 rounded-full p-2 shadow-lg shadow-rose-600/50">
+                        <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </div>
+                </div>
+                
+                <!-- Main Visual Container -->
+                <div class="flex-1 relative bg-black w-full flex flex-col justify-center items-center overflow-hidden" id="card-vis-${s.id}">
+                     <div id="laser-${s.id}" class="absolute top-0 laser-beam transition-none opacity-0"></div>
+                     <canvas id="canvas-${s.id}" class="w-full"></canvas>
+                     <div class="absolute bottom-1 right-2 text-[10px] text-slate-600 font-mono">W: ${(s.width*100).toFixed(1)}cm</div>
+                </div>
+            </div>`;
+            container.innerHTML += html;
+        });
+    }
+
+    // --- Physics Class ---
+    class TargetSim {
+        constructor(config) {
+            this.cfg = config;
+            this.DX = config.width / GRID_X;
+            this.DZ = config.thick / GRID_Z;
+            
+            const alpha = config.mat.k / (config.mat.rho * config.mat.cp);
+            
+            // Critical fix: Use minimum dimension for stability check
+            const minSpace = Math.min(this.DX, this.DZ);
+            
+            // Increased stability factor: 0.10 * dx^2 / alpha (Very strict)
+            const thermalDt = 0.10 * (minSpace * minSpace) / alpha;
+            
+            // Kinematic limit
+            let kinematicDt = 0.01; 
+            const spotR = BASE_SPOT_R * rangeScale; 
+            
+            if (this.cfg.type === "spin") {
+                const freq = this.cfg.rpm / 60;
+                const maxVel = (this.cfg.width / 2) * 2 * Math.PI * freq;
+                // Ensure we don't skip over grid cells
+                kinematicDt = (this.DX * 0.5) / maxVel;
+            } 
+            
+            this.stepDt = Math.min(thermalDt, kinematicDt, 0.0002); // Hard cap 0.2ms
+
+            this.T = new Float32Array(GRID_Z * GRID_X).fill(AMBIENT_TEMP);
+            this.failed = false;
+            this.failTime = null;
+            this.finished = false;
+            this.localTime = 0; 
+        }
+
+        step(targetTime) {
+            if (this.finished) return;
+
+            while (this.localTime < targetTime) {
+                if (this.localTime >= this.cfg.dwell) {
+                    if (!this.failed) this.finished = true;
+                    return;
+                }
+                if (this.failed) {
+                    this.finished = true;
+                    return;
+                }
+                this.computePhysics(this.stepDt);
+                this.localTime += this.stepDt;
+            }
+        }
+
+        computePhysics(dt) {
+            const mat = this.cfg.mat;
+            const alpha = mat.k / (mat.rho * mat.cp);
+            
+            const idealSpotR = BASE_SPOT_R * rangeScale;
+            // Beam Spreading due to Strehl
+            const effSpotR = idealSpotR / Math.sqrt(strehlRatio);
+            
+            const peakFlux = (2 * POWER * strehlRatio) / (Math.PI * Math.pow(idealSpotR, 2));
+
+            let laserX = 0; 
+            
+            if (this.cfg.type === "spin") {
+                const freq = this.cfg.rpm / 60;
+                let phase = 0;
+                if (this.cfg.id === 2) phase = Math.PI / 2; // Rocket Start Right
+                laserX = (this.cfg.width / 2) * Math.sin(2 * Math.PI * freq * this.localTime + phase);
+            }
+
+            const rx = alpha * dt / (this.DX * this.DX);
+            const rz = alpha * dt / (this.DZ * this.DZ);
+            const T_new = new Float32Array(this.T.length);
+
+            for (let i = 0; i < GRID_Z; i++) {
+                const rowOffset = i * GRID_X;
+                for (let j = 0; j < GRID_X; j++) {
+                    const idx = rowOffset + j;
+                    const T_val = this.T[idx];
+
+                    const T_left = j > 0 ? this.T[idx - 1] : T_val;
+                    const T_right = j < GRID_X - 1 ? this.T[idx + 1] : T_val;
+                    const diffX = rx * (T_left - 2 * T_val + T_right);
+
+                    let diffZ = 0;
+                    if (i === 0) {
+                        const nodeX = (j * this.DX) - (this.cfg.width / 2);
+                        const dist = Math.abs(nodeX - laserX);
+                        let flux = 0;
+                        if (dist < effSpotR * 3) {
+                             flux = mat.abs * peakFlux * Math.exp(-2 * (dist*dist)/(effSpotR*effSpotR));
+                        }
+                        const T_below = this.T[idx + GRID_X];
+                        const sourceTerm = (2 * this.DZ * flux) / mat.k;
+                        diffZ = rz * (2 * T_below - 2 * T_val + sourceTerm);
+                    } else if (i === GRID_Z - 1) {
+                        const T_above = this.T[idx - GRID_X];
+                        diffZ = rz * (2 * T_above - 2 * T_val);
+                    } else {
+                        const T_above = this.T[idx - GRID_X];
+                        const T_below = this.T[idx + GRID_X];
+                        diffZ = rz * (T_above - 2 * T_val + T_below);
+                    }
+                    T_new[idx] = T_val + diffX + diffZ;
+                }
+            }
+            this.T = T_new;
+
+            // Check Failure
+            const startRow = (GRID_Z - 1) * GRID_X;
+            const margin = Math.floor(GRID_X * 0.1);
+            let maxT = 0;
+            for(let j=margin; j<GRID_X-margin; j++) {
+                if(this.T[startRow + j] > maxT) maxT = this.T[startRow + j];
+            }
+            
+            if (maxT >= mat.tm) {
+                this.failed = true;
+                this.failTime = this.localTime;
+            }
+        }
+        
+        snapshot() {
+            let maxT = 0;
+            const startRow = (GRID_Z - 1) * GRID_X;
+            for(let j=0; j<GRID_X; j++) {
+                if(this.T[startRow + j] > maxT) maxT = this.T[startRow + j];
+            }
+
+            let laserX = 0; 
+            if (this.cfg.type === "spin") {
+                const freq = this.cfg.rpm / 60;
+                let phase = 0;
+                if (this.cfg.id === 2) phase = Math.PI / 2;
+                laserX = (this.cfg.width / 2) * Math.sin(2 * Math.PI * freq * this.localTime + phase);
+            }
+            
+            return {
+                T: new Float32Array(this.T), 
+                maxT: maxT,
+                laserX: laserX,
+                failed: this.failed,
+                finished: this.finished,
+                time: this.localTime
+            };
+        }
+    }
+
+    // --- App Controller ---
+    
+    function resetToStart() {
+        stopPlayback();
+        playbackIndex = 0;
+        document.getElementById('sim-time-global').innerText = "0.00 s";
+        if (recordedFrames.length > 0) {
+            renderFrame(0);
+        }
+    }
+
+    function handleRunClick() {
+        const btn = document.getElementById('runBtn');
+        const btnText = document.getElementById('runBtnText');
+        
+        if (btnText.innerText === "REPLAY") {
+            startPlayback();
+            return;
+        }
+        runSimulation();
+    }
+
+    function runSimulation() {
+        if (isPlaying) stopPlayback();
+        
+        const btn = document.getElementById('runBtn');
+        const btnText = document.getElementById('runBtnText');
+        const overlay = document.getElementById('loading-overlay');
+        const progressBar = document.getElementById('progress-bar');
+        
+        btn.disabled = true;
+        overlay.classList.add('active');
+        
+        sims = SCENARIOS.map(s => new TargetSim(s));
+        recordedFrames = [];
+        
+        recordedFrames.push(sims.map(s => s.snapshot()));
+        
+        let simTime = 0;
+        let frameCount = 0;
+
+        function processBatch() {
+            const startTime = performance.now();
+            while (frameCount < TOTAL_FRAMES && performance.now() - startTime < 50) {
+                simTime += DT_FRAME;
+                sims.forEach(s => s.step(simTime));
+                recordedFrames.push(sims.map(s => s.snapshot()));
+                frameCount++;
+            }
+
+            const pct = (frameCount / TOTAL_FRAMES) * 100;
+            progressBar.style.width = `${pct}%`;
+
+            if (frameCount < TOTAL_FRAMES) {
+                setTimeout(processBatch, 0);
+            } else {
+                overlay.classList.remove('active');
+                btn.disabled = false;
+                btnText.innerText = "REPLAY";
+                startPlayback();
+            }
+        }
+        processBatch();
+    }
+
+    function startPlayback() {
+        isPlaying = true;
+        let lastTimestamp = 0;
+        let accumulator = 0;
+
+        function playLoop(timestamp) {
+            if (!isPlaying) return;
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const deltaTime = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+            accumulator += deltaTime * playbackSpeed;
+            
+            while (accumulator >= DT_FRAME) {
+                playbackIndex++;
+                accumulator -= DT_FRAME;
+            }
+
+            if (playbackIndex >= recordedFrames.length) {
+                playbackIndex = recordedFrames.length - 1;
+                renderFrame(playbackIndex);
+                stopPlayback();
+                return;
+            }
+            
+            renderFrame(playbackIndex);
+            
+            const t = playbackIndex * DT_FRAME;
+            document.getElementById('sim-time-global').innerText = t.toFixed(2) + " s";
+
+            animationFrameId = requestAnimationFrame(playLoop);
+        }
+        animationFrameId = requestAnimationFrame(playLoop);
+    }
+
+    function stopPlayback() {
+        isPlaying = false;
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    }
+
+    function renderFrame(idx) {
+        const frameData = recordedFrames[idx];
+        if (!frameData) return;
+
+        frameData.forEach((data, simId) => {
+            const canvas = document.getElementById(`canvas-${simId}`);
+            const ctx = canvas.getContext('2d');
+            const cfg = SCENARIOS[simId];
+            
+            document.getElementById(`temp-${simId}`).innerText = Math.round(data.maxT) + " K";
+            const timeEl = document.getElementById(`status-time-${simId}`);
+            timeEl.innerText = data.time.toFixed(2) + "s";
+            
+            // Check success/fail
+            const isTimeOut = (data.time >= cfg.dwell - 0.05); // Tolerance for end-of-sim detection
+            
+            if (data.failed) {
+                 document.getElementById(`status-success-${simId}`).classList.add('visible');
+                 timeEl.className = "text-xs font-mono font-bold text-emerald-400";
+            } else if (isTimeOut && !data.failed) {
+                 // Explicitly use time check for UI rendering to guarantee Red Cross at end
+                 document.getElementById(`status-fail-${simId}`).classList.add('visible');
+                 timeEl.className = "text-xs font-mono font-bold text-rose-500";
+            } else {
+                 document.getElementById(`status-success-${simId}`).classList.remove('visible');
+                 document.getElementById(`status-fail-${simId}`).classList.remove('visible');
+                 timeEl.className = "text-xs font-mono font-bold text-white";
+            }
+
+            const containerW = document.getElementById(`card-vis-${simId}`).clientWidth;
+            const pxPerMeter = containerW / cfg.width;
+            const pxHeight = Math.max(3, cfg.thick * pxPerMeter);
+            
+            if (canvas.height !== Math.floor(pxHeight)) {
+                canvas.height = Math.floor(pxHeight);
+                canvas.width = GRID_X; 
+                canvas.style.height = `${pxHeight}px`;
+            }
+
+            const laserEl = document.getElementById(`laser-${simId}`);
+            
+            const idealSpotR = BASE_SPOT_R * rangeScale;
+            const effSpotR = idealSpotR / Math.sqrt(strehlRatio);
+            
+            const pctWidth = ((effSpotR * 2) / cfg.width) * 100;
+            const pctOffset = (data.laserX / cfg.width) * 100;
+
+            laserEl.style.width = `${Math.max(1, pctWidth)}%`;
+            laserEl.style.left = `${50 + pctOffset}%`;
+            
+            const containerH = document.getElementById(`card-vis-${simId}`).clientHeight;
+            const topGap = (containerH - pxHeight) / 2;
+            laserEl.style.height = `${topGap}px`;
+
+            if (data.finished) {
+                laserEl.style.opacity = '0.2';
+            } else {
+                laserEl.style.opacity = '1';
+            }
+
+            const w = GRID_X;
+            const h = GRID_Z;
+            const imgData = ctx.createImageData(w, h);
+            const px = imgData.data;
+            const temp = data.T;
+            const matTm = cfg.mat.tm;
+
+            for (let i = 0; i < h; i++) {
+                for (let j = 0; j < w; j++) {
+                    const k = i * w + j;
+                    const val = temp[k];
+                    const pIdx = k * 4;
+
+                    let R=30, G=35, B=45; 
+                    if (val > 305) {
+                        const tNorm = Math.min(1, (val - 300) / (matTm - 300));
+                        if (val >= matTm) { R=255; G=255; B=255; }
+                        else {
+                             R = Math.min(255, tNorm * 300);
+                             G = Math.max(0, (tNorm - 0.5) * 200);
+                             B = Math.max(0, (0.5 - tNorm) * 100);
+                        }
+                    }
+                    px[pIdx] = R; px[pIdx+1] = G; px[pIdx+2] = B; px[pIdx+3] = 255;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+        });
+    }
+
+    document.getElementById('runBtn').addEventListener('click', handleRunClick);
+    document.getElementById('resetFrameBtn').addEventListener('click', resetToStart);
+
+    document.getElementById('rangeSelect').addEventListener('change', (e) => {
+        const parts = e.target.value.split(',');
+        rangeScale = parseInt(parts[0]);
+        strehlRatio = parseFloat(parts[1]);
+        
+        stopPlayback();
+        generateCards();
+        document.getElementById('runBtn').disabled = false;
+        document.getElementById('runBtnText').innerText = "RUN SIM";
+    });
+
+    document.getElementById('speedSlider').addEventListener('input', (e) => {
+        playbackSpeed = parseFloat(e.target.value);
+        document.getElementById('speedVal').innerText = playbackSpeed.toFixed(1) + "x";
+    });
+
+    document.getElementById('fullscreenBtn').addEventListener('click', () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+    });
+    
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            e.preventDefault();
+            handleRunClick();
+        } else if (e.code === 'KeyR') {
+            e.preventDefault();
+            resetToStart();
+        }
+    });
+    
+    document.addEventListener('fullscreenchange', () => {
+        document.body.classList.toggle('is-fullscreen', !!document.fullscreenElement);
+    });
+
+    window.addEventListener('resize', () => {
+        if(!isPlaying && recordedFrames.length > 0) renderFrame(playbackIndex);
+    });
+
+    generateCards();
+
+})();
+</script>
+</body>
+</html>

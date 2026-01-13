@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Distance Laser Heating Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+        }
+        /* Custom Scrollbar for sidebar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #38bdf8;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        /* Laser Cylinder Effect */
+        .laser-cylinder {
+            background: linear-gradient(90deg, 
+                rgba(153, 27, 27, 0.9) 0%, 
+                rgba(239, 68, 68, 1) 45%, 
+                rgba(254, 202, 202, 1) 50%, 
+                rgba(239, 68, 68, 1) 55%, 
+                rgba(153, 27, 27, 0.9) 100%);
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        }
+
+        /* Fullscreen Mode Styles */
+        body.is-fullscreen header,
+        body.is-fullscreen aside {
+            display: none !important;
+        }
+        body.is-fullscreen {
+            cursor: none;
+        }
+        body.is-fullscreen main {
+            padding: 0;
+        }
+        body.is-fullscreen .sim-grid {
+            gap: 0;
+            padding: 0;
+        }
+        body.is-fullscreen .sim-card {
+            border-radius: 0;
+            border: 1px solid #1e293b;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-slate-900 border-b border-slate-700 p-4 flex justify-between items-center shrink-0 h-16">
+        <div>
+            <h1 class="text-xl font-bold text-sky-400">Laser Interaction Physics Engine</h1>
+            <p class="text-xs text-slate-400">Multi-Scenario Finite Difference Solver (100 kW Source)</p>
+        </div>
+        <div class="flex items-center gap-4">
+             <div class="text-right text-xs text-slate-400">
+                <span id="sim-time-global" class="text-xl font-mono text-white block">0.00 s</span>
+                Simulation Time
+             </div>
+            <div id="status-indicator" class="inline-flex items-center px-3 py-1 rounded-full bg-slate-800 text-sm font-medium border border-slate-600">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse" id="status-dot"></span>
+                <span id="status-text">Ready</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- Sidebar Controls -->
+        <aside class="w-64 bg-slate-900 border-r border-slate-700 overflow-y-auto p-4 flex flex-col gap-6 shrink-0 z-10 shadow-xl">
+            
+            <!-- Global Material Controls -->
+            <div class="space-y-4">
+                <h2 class="text-xs uppercase tracking-wider text-slate-500 font-bold border-b border-slate-700 pb-2">Target Properties</h2>
+                
+                <div>
+                    <label class="block text-xs font-medium mb-1">Material</label>
+                    <select id="materialSelect" class="w-full bg-slate-800 border border-slate-600 rounded p-2 text-sm focus:outline-none focus:border-sky-500 text-sky-100">
+                        <option value="steel">Stainless Steel 304</option>
+                        <option value="aluminum">Aluminum 6061</option>
+                        <option value="titanium">Titanium Ti-6Al-4V</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium mb-1">Thickness (mm)</label>
+                    <input type="range" id="thicknessSlider" min="2" max="50" step="1" value="15" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb">
+                    <div class="flex justify-between text-xs mt-1 text-sky-300">
+                        <span>2mm</span>
+                        <span id="thicknessVal">15 mm</span>
+                        <span>50mm</span>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium mb-1">Time Speed</label>
+                    <input type="range" id="speedSlider" min="0.1" max="5.0" step="0.1" value="1.0" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb">
+                    <div class="flex justify-between text-xs mt-1 text-sky-300">
+                        <span>0.1x</span>
+                        <span id="speedVal">1.0x (Real Time)</span>
+                        <span>5.0x</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Legend/Info -->
+            <div class="space-y-2 text-xs text-slate-400">
+                <h2 class="text-xs uppercase tracking-wider text-slate-500 font-bold border-b border-slate-700 pb-2">Scenarios</h2>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-rose-500"></div> 1 km (Spot: 2.8mm)
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-orange-400"></div> 2 km (Spot: 5.5mm)
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-yellow-400"></div> 4 km (Spot: 1.1cm)
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-emerald-400"></div> 8 km (Spot: 2.2cm)
+                </div>
+            </div>
+
+            <div class="mt-auto space-y-3">
+                <div class="text-xs text-slate-500 text-center pb-2">
+                    Press <span class="font-mono text-white bg-slate-700 px-1 rounded">SPACE</span> to Start<br>
+                    Press <span class="font-mono text-white bg-slate-700 px-1 rounded">R</span> to Reset
+                </div>
+                <button id="resetBtn" class="w-full py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded shadow transition-colors flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    Run Simulation
+                </button>
+                <button id="fullscreenBtn" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded shadow transition-colors flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 010 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clip-rule="evenodd" />
+                    </svg>
+                    Start Fullscreen
+                </button>
+            </div>
+        </aside>
+
+        <!-- Visualization Area -->
+        <main class="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+            
+            <!-- Grid Container for 4 Sims -->
+            <div class="flex-1 p-4 grid grid-cols-2 gap-4 min-h-0 overflow-hidden sim-grid">
+                
+                <!-- Card 1: 1km -->
+                <div class="bg-slate-900 border border-slate-700 rounded-lg flex flex-col relative overflow-hidden group sim-card">
+                    <div class="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-rose-500/50">
+                        <h3 class="text-rose-400 font-bold text-sm">1 km Distance</h3>
+                        <p class="text-xs text-slate-300">r = 2.8 mm</p>
+                    </div>
+                    <div class="absolute top-2 right-2 z-10 text-right">
+                        <div class="text-xl font-mono font-bold text-white" id="temp-0">300 K</div>
+                        <div class="text-xs text-slate-400" id="status-0">Safe</div>
+                    </div>
+                    
+                    <!-- Air Gap (Laser Region) -->
+                    <div class="h-1/4 w-full relative flex justify-center items-end shrink-0 bg-slate-800/20 border-b border-slate-700/50">
+                         <!-- Laser Div -->
+                         <div id="laser-0" class="h-full laser-cylinder w-2"></div>
+                    </div>
+                    
+                    <!-- Material (Canvas Region) -->
+                    <div class="flex-1 relative bg-black w-full flex items-start justify-center overflow-hidden">
+                         <canvas id="canvas-0" class="w-full h-full object-contain object-top"></canvas>
+                    </div>
+                </div>
+
+                <!-- Card 2: 2km -->
+                <div class="bg-slate-900 border border-slate-700 rounded-lg flex flex-col relative overflow-hidden group sim-card">
+                    <div class="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-orange-400/50">
+                        <h3 class="text-orange-400 font-bold text-sm">2 km Distance</h3>
+                        <p class="text-xs text-slate-300">r = 5.5 mm</p>
+                    </div>
+                    <div class="absolute top-2 right-2 z-10 text-right">
+                        <div class="text-xl font-mono font-bold text-white" id="temp-1">300 K</div>
+                        <div class="text-xs text-slate-400" id="status-1">Safe</div>
+                    </div>
+                    
+                    <!-- Air Gap -->
+                    <div class="h-1/4 w-full relative flex justify-center items-end shrink-0 bg-slate-800/20 border-b border-slate-700/50">
+                        <div id="laser-1" class="h-full laser-cylinder w-4"></div>
+                    </div>
+                    
+                    <!-- Material -->
+                    <div class="flex-1 relative bg-black w-full flex items-start justify-center overflow-hidden">
+                        <canvas id="canvas-1" class="w-full h-full object-contain object-top"></canvas>
+                    </div>
+                </div>
+
+                <!-- Card 3: 4km -->
+                <div class="bg-slate-900 border border-slate-700 rounded-lg flex flex-col relative overflow-hidden group sim-card">
+                    <div class="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-yellow-400/50">
+                        <h3 class="text-yellow-400 font-bold text-sm">4 km Distance</h3>
+                        <p class="text-xs text-slate-300">r = 1.1 cm</p>
+                    </div>
+                    <div class="absolute top-2 right-2 z-10 text-right">
+                        <div class="text-xl font-mono font-bold text-white" id="temp-2">300 K</div>
+                        <div class="text-xs text-slate-400" id="status-2">Safe</div>
+                    </div>
+                    
+                    <!-- Air Gap -->
+                    <div class="h-1/4 w-full relative flex justify-center items-end shrink-0 bg-slate-800/20 border-b border-slate-700/50">
+                        <div id="laser-2" class="h-full laser-cylinder w-8"></div>
+                    </div>
+                    
+                    <!-- Material -->
+                    <div class="flex-1 relative bg-black w-full flex items-start justify-center overflow-hidden">
+                        <canvas id="canvas-2" class="w-full h-full object-contain object-top"></canvas>
+                    </div>
+                </div>
+
+                <!-- Card 4: 8km -->
+                <div class="bg-slate-900 border border-slate-700 rounded-lg flex flex-col relative overflow-hidden group sim-card">
+                    <div class="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-emerald-400/50">
+                        <h3 class="text-emerald-400 font-bold text-sm">8 km Distance</h3>
+                        <p class="text-xs text-slate-300">r = 2.2 cm</p>
+                    </div>
+                    <div class="absolute top-2 right-2 z-10 text-right">
+                        <div class="text-xl font-mono font-bold text-white" id="temp-3">300 K</div>
+                        <div class="text-xs text-slate-400" id="status-3">Safe</div>
+                    </div>
+                    
+                    <!-- Air Gap -->
+                    <div class="h-1/4 w-full relative flex justify-center items-end shrink-0 bg-slate-800/20 border-b border-slate-700/50">
+                        <div id="laser-3" class="h-full laser-cylinder w-16"></div>
+                    </div>
+                    
+                    <!-- Material -->
+                    <div class="flex-1 relative bg-black w-full flex items-start justify-center overflow-hidden">
+                        <canvas id="canvas-3" class="w-full h-full object-contain object-top"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+<script>
+(function() {
+    /**
+     * CONFIGURATION
+     */
+    const SCENARIOS = [
+        { id: 0, dist: "1 km", r_cm: 0.28, color: '#f43f5e' }, // Rose
+        { id: 1, dist: "2 km", r_cm: 0.55, color: '#fb923c' }, // Orange
+        { id: 2, dist: "4 km", r_cm: 1.1,  color: '#facc15' }, // Yellow
+        { id: 3, dist: "8 km", r_cm: 2.2,  color: '#34d399' }  // Emerald
+    ];
+
+    const MATERIALS = {
+        steel: { name: "Stainless Steel 304", rho: 8000, cp: 500, k: 16.2, tm: 1700, abs: 0.4 },
+        aluminum: { name: "Aluminum 6061", rho: 2700, cp: 896, k: 167, tm: 933, abs: 0.09 },
+        titanium: { name: "Titanium Ti-6Al-4V", rho: 4430, cp: 526, k: 6.7, tm: 1900, abs: 0.3 }
+    };
+
+    // Shared Simulation Params
+    let globalParams = {
+        thickness: 0.015, // m
+        material: MATERIALS.steel,
+        power: 100000, // 100 kW fixed
+        ambient: 300
+    };
+    
+    let speedMultiplier = 1.0;
+
+    // Physics Constants
+    const R_DOMAIN = 0.05; // 5 cm radius domain
+    const DR = 0.0005; // 0.5 mm
+    const DZ = 0.0005; // 0.5 mm
+
+    /**
+     * CLASS: Single Simulation Instance
+     */
+    class LaserSimulation {
+        constructor(scenarioId, radiusCm) {
+            this.id = scenarioId;
+            this.w0 = radiusCm / 100; // Convert cm to m
+            this.canvas = document.getElementById(`canvas-${scenarioId}`);
+            this.ctx = this.canvas.getContext('2d');
+            this.tempEl = document.getElementById(`temp-${scenarioId}`);
+            this.statusEl = document.getElementById(`status-${scenarioId}`);
+            
+            // Set canvas resolution low for performance/pixel art style
+            this.canvas.width = 150; 
+            this.canvas.height = 75;
+
+            this.reset();
+        }
+
+        reset() {
+            this.gridRows = Math.ceil(globalParams.thickness / DZ);
+            this.gridCols = Math.ceil(R_DOMAIN / DR);
+            this.T = new Float32Array(this.gridRows * this.gridCols).fill(globalParams.ambient);
+            this.failed = false;
+            this.failedTime = null;
+            this.bottomTemp = globalParams.ambient;
+        }
+
+        step(dt, alpha) {
+            if (this.failed) return;
+
+            const mat = globalParams.material;
+            const dr2 = DR * DR;
+            const dz2 = DZ * DZ;
+            
+            const peakFlux = (2 * globalParams.power) / (Math.PI * Math.pow(this.w0, 2));
+            const T_new = new Float32Array(this.T);
+
+            // Optimization: Cache constants
+            const invDr2 = 1/dr2;
+            const invDz2 = 1/dz2;
+            const inv2Dr = 1/(2*DR);
+            
+            // Running loop over grid
+            for (let i = 0; i < this.gridRows; i++) {
+                // Pre-calc Z neighbors
+                const i_up = i === 0 ? 1 : i - 1; // 0 is top surface
+                const i_down = i === this.gridRows - 1 ? i - 1 : i + 1;
+                
+                for (let j = 0; j < this.gridCols; j++) {
+                    const idx = i * this.gridCols + j;
+                    const temp = this.T[idx];
+                    const j_left = j === 0 ? 1 : j - 1;
+                    const j_right = j === this.gridCols - 1 ? j - 1 : j + 1;
+                    
+                    // Radial Laplacian
+                    let d2Tdr2, term1_r;
+                    if (j === 0) {
+                        // Symmetry r=0: 2 * d2T/dr2
+                        d2Tdr2 = 2 * (this.T[i*this.gridCols + 1] - temp) * invDr2;
+                        term1_r = 0;
+                    } else {
+                        d2Tdr2 = (this.T[i*this.gridCols + j_right] - 2*temp + this.T[i*this.gridCols + j_left]) * invDr2;
+                        term1_r = (1/(j*DR)) * (this.T[i*this.gridCols + j_right] - this.T[i*this.gridCols + j_left]) * inv2Dr;
+                    }
+
+                    // Axial Laplacian & Boundary
+                    let d2Tdz2;
+                    if (i === 0) {
+                        // Surface Laser Flux
+                        const r = j * DR;
+                        const flux = mat.abs * peakFlux * Math.exp(-2 * (r*r) / (this.w0 * this.w0));
+                        // Boundary: (2T[1] - 2T[0] + 2*dz*flux/k)/dz2
+                        d2Tdz2 = (2*this.T[1*this.gridCols + j] - 2*temp + (2*DZ*flux/mat.k)) * invDz2;
+                    } else if (i === this.gridRows - 1) {
+                         // Adiabatic bottom
+                         d2Tdz2 = (2*this.T[(i-1)*this.gridCols + j] - 2*temp) * invDz2;
+                    } else {
+                         d2Tdz2 = (this.T[(i+1)*this.gridCols + j] - 2*temp + this.T[(i-1)*this.gridCols + j]) * invDz2;
+                    }
+                    
+                    // Update
+                    if (j===0) {
+                         T_new[idx] = temp + alpha * dt * (2*(this.T[i*this.gridCols+1]-temp)*invDr2 + d2Tdz2);
+                    } else {
+                         T_new[idx] = temp + dt * alpha * (d2Tdr2 + term1_r + d2Tdz2);
+                    }
+                }
+            }
+            this.T = T_new;
+            
+            // Check Failure
+            this.bottomTemp = this.T[(this.gridRows - 1) * this.gridCols];
+            if (this.bottomTemp >= mat.tm && !this.failed) {
+                this.failed = true;
+                this.failedTime = globalTime;
+                this.statusEl.innerHTML = `<span class="text-rose-500 font-bold">FAIL: ${this.failedTime.toFixed(2)}s</span>`;
+                this.tempEl.classList.add('text-rose-500');
+            } else if (!this.failed) {
+                this.tempEl.innerText = Math.round(this.bottomTemp) + " K";
+            }
+        }
+
+        render() {
+            const cw = this.canvas.width;
+            const ch = this.canvas.height;
+            const imgData = this.ctx.getImageData(0,0, cw, ch);
+            const data = imgData.data;
+
+            // Visual Scaling
+            // X axis: 0 to cw maps to 0 to R_DOMAIN
+            // Y axis: 0 to ch maps to 0 to Thickness
+            
+            const maxTemp = globalParams.material.tm * 1.2;
+            const minTemp = 300;
+            const tm = globalParams.material.tm;
+
+            for(let y=0; y<ch; y++) {
+                const zIdx = Math.floor( (y/ch) * this.gridRows );
+                if (zIdx >= this.gridRows) continue;
+
+                for(let x=0; x<cw; x++) {
+                    // Render -R to +R
+                    // Center is cw/2
+                    const rReal = Math.abs(x - cw/2) / (cw/2) * R_DOMAIN;
+                    const rIdx = Math.floor(rReal/DR);
+                    
+                    let r=40, g=45, b=60; // Default slate-800 background (empty space)
+
+                    if (rIdx < this.gridCols) {
+                        const val = this.T[zIdx * this.gridCols + rIdx];
+                        
+                        // New Palette: Grey -> Red -> Yellow -> White
+                        if (val > tm) {
+                            // Melted (Liquid)
+                            r=255; g=255; b=255;
+                        } else {
+                            const n = (val - minTemp) / (tm - minTemp);
+                            if (n < 0.1) {
+                                // Cold Grey (Metallic)
+                                // 300K -> 600K range roughly
+                                const lum = 80 + n*1000; 
+                                r=lum; g=lum; b=lum; 
+                            } else {
+                                // Red Hot to Yellow
+                                // n is 0.1 to 1.0
+                                // Remap n to 0-1 for this section
+                                const h = (n - 0.1) / 0.9; 
+                                r = 80 + h * 175; // 80 -> 255
+                                g = 80 + Math.max(0, (h-0.5)*2 * 175); // Starts adding green later
+                                b = 80;
+                            }
+                        }
+                    }
+                    
+                    const pIdx = (y*cw + x)*4;
+                    data[pIdx] = r;
+                    data[pIdx+1] = g;
+                    data[pIdx+2] = b;
+                    data[pIdx+3] = 255;
+                }
+            }
+            this.ctx.putImageData(imgData, 0, 0);
+        }
+    }
+
+    /**
+     * MAIN CONTROLLER
+     */
+    let sims = [];
+    let globalTime = 0;
+    let isRunning = false;
+
+    function initAll() {
+        sims = SCENARIOS.map(s => new LaserSimulation(s.id, s.r_cm));
+        globalTime = 0;
+        
+        // Reset UI text
+        document.getElementById('sim-time-global').innerText = "0.00 s";
+        SCENARIOS.forEach(s => {
+            document.getElementById(`status-${s.id}`).innerText = "Safe";
+            document.getElementById(`status-${s.id}`).innerHTML = "Safe";
+            document.getElementById(`temp-${s.id}`).classList.remove('text-rose-500');
+            document.getElementById(`temp-${s.id}`).classList.add('text-white');
+            
+            // Adjust laser visual width
+            // Canvas Width is 150px representing 10cm (2 * R_DOMAIN of 5cm)
+            // Scale = 15 px / cm
+            // Laser Width = 2 * Radius * Scale
+            const pxPerCm = 15; // 150px / 10cm
+            const widthPx = (s.r_cm * 2) * pxPerCm;
+            
+            const laserEl = document.getElementById(`laser-${s.id}`);
+            laserEl.style.width = Math.max(2, widthPx) + "px";
+        });
+        
+        // Render initial state
+        sims.forEach(s => s.render());
+    }
+
+    function loop() {
+        if (!isRunning) return;
+
+        const mat = globalParams.material;
+        const alpha = mat.k / (mat.rho * mat.cp);
+        const minD = Math.min(DR, DZ);
+        const dt = (0.25 * minD * minD / alpha) * 0.8; // Stability Limit
+        
+        // Dynamic Step Calculation for Real Time
+        // Target: Advance simulation by (1/60) seconds per frame * multiplier
+        // Sim time per step = dt
+        // Steps needed = (1/60 * multiplier) / dt
+        const frameTime = 1 / 60;
+        const targetSimTimePerFrame = frameTime * speedMultiplier;
+        const steps = Math.max(1, Math.floor(targetSimTimePerFrame / dt));
+
+        for(let i=0; i<steps; i++) {
+            sims.forEach(s => s.step(dt, alpha));
+            globalTime += dt;
+        }
+
+        // Render & Update UI
+        sims.forEach((s, idx) => {
+            s.render();
+        });
+        
+        document.getElementById('sim-time-global').innerText = globalTime.toFixed(2) + " s";
+
+        // Check failure of all to stop loop
+        const allFailed = sims.every(s => s.failed);
+        if (allFailed) isRunning = false;
+
+        requestAnimationFrame(loop);
+    }
+
+    /**
+     * EVENTS
+     */
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        isRunning = false;
+        initAll();
+        isRunning = true;
+        updateStatus("Running", "emerald");
+        loop();
+    });
+
+    // Keyboard Shortcuts (R to Reset, Space to Start)
+    document.addEventListener('keydown', (e) => {
+        // Space to Start
+        if (e.code === 'Space') {
+            e.preventDefault(); // Prevent scrolling
+            if (!isRunning) {
+                isRunning = true;
+                updateStatus("Running", "emerald");
+                loop();
+            }
+        }
+        // R to Reset
+        if (e.code === 'KeyR') {
+            isRunning = false;
+            initAll();
+            updateStatus("Ready", "emerald");
+        }
+    });
+
+    document.getElementById('thicknessSlider').addEventListener('input', (e) => {
+        globalParams.thickness = parseInt(e.target.value) / 1000;
+        document.getElementById('thicknessVal').innerText = e.target.value + " mm";
+        initAll(); // Restart on geometry change
+    });
+    
+    document.getElementById('speedSlider').addEventListener('input', (e) => {
+        speedMultiplier = parseFloat(e.target.value);
+        document.getElementById('speedVal').innerText = speedMultiplier.toFixed(1) + "x" + (speedMultiplier === 1 ? " (Real Time)" : "");
+    });
+
+    document.getElementById('materialSelect').addEventListener('change', (e) => {
+        globalParams.material = MATERIALS[e.target.value];
+        initAll();
+    });
+    
+    // Fullscreen Handling
+    const fsBtn = document.getElementById('fullscreenBtn');
+    fsBtn.addEventListener('click', () => {
+        const el = document.documentElement;
+        if (el.requestFullscreen) {
+            el.requestFullscreen();
+        }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement) {
+            document.body.classList.add('is-fullscreen');
+        } else {
+            document.body.classList.remove('is-fullscreen');
+        }
+    });
+
+    function updateStatus(text, color) {
+        document.getElementById('status-text').innerText = text;
+        const dot = document.getElementById('status-dot');
+        dot.className = `w-2 h-2 rounded-full mr-2 bg-${color}-500 animate-pulse`;
+    }
+
+    // Startup
+    initAll();
+    
+})();
+</script>
+</body>
+</html>
